@@ -1,2 +1,2 @@
-github.com/rest-mail/dkim v0.1.0 h1:mP48oGATN2rumMgEB8ha46DnqOsqlA8pfTyBbNQzHJY=
-github.com/rest-mail/dkim v0.1.0/go.mod h1:uw7jiklUxfrn/a4dKbTCxuj+z+uIa89PYY4Raq3zmo8=
+github.com/rest-mail/go-dkim v0.1.1 h1:IwgLrjXc/B9cuA99EeInuUjSTIUhcyp6qHxS0qiTiKs=
+github.com/rest-mail/go-dkim v0.1.1/go.mod h1:gKNVxM9vL+am4veiCZMO/UlKBj6zI0jBleex1+fmJsU=

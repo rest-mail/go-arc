@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rest-mail/dkim"
+	"github.com/rest-mail/go-dkim"
 )
 
 // --- test-side ARC sealer (constructs valid ARC sets to verify against) ---

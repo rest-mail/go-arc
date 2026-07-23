@@ -8,7 +8,7 @@
 // An ARC-Message-Signature is structurally a DKIM-Signature and an ARC-Seal is a
 // DKIM-style signature over the ARC header chain, so this package reuses the
 // canonicalization and signature primitives exported by
-// github.com/rest-mail/dkim, guaranteeing ARC verification is byte-for-byte
+// github.com/rest-mail/go-dkim, guaranteeing ARC verification is byte-for-byte
 // consistent with DKIM verification over the same message.
 package arc
 
@@ -23,7 +23,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/rest-mail/dkim"
+	"github.com/rest-mail/go-dkim"
 )
 
 // arcSet is one ARC header set at a given instance: ARC-Authentication-Results,
@@ -42,7 +42,7 @@ type arcSet struct {
 // system DNS resolver.
 //
 // Header/body canonicalization is shared with dkim.Verify (via the primitives
-// exported by github.com/rest-mail/dkim), so ARC verification is consistent with
+// exported by github.com/rest-mail/go-dkim), so ARC verification is consistent with
 // DKIM verification and with any RFC 8617 verifier operating on the same bytes.
 func Verify(ctx context.Context, rawMessage []byte, resolver dkim.TXTResolver) (string, string) {
 	if resolver == nil {
