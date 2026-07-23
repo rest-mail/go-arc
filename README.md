@@ -1,7 +1,7 @@
 # arc
 
-[![CI](https://github.com/rest-mail/arc/actions/workflows/ci.yml/badge.svg)](https://github.com/rest-mail/arc/actions/workflows/ci.yml)
-[![Go Reference](https://pkg.go.dev/badge/github.com/rest-mail/arc.svg)](https://pkg.go.dev/github.com/rest-mail/arc)
+[![CI](https://github.com/rest-mail/go-arc/actions/workflows/ci.yml/badge.svg)](https://github.com/rest-mail/go-arc/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/rest-mail/go-arc.svg)](https://pkg.go.dev/github.com/rest-mail/go-arc)
 
 ARC — Authenticated Received Chain
 ([RFC 8617](https://www.rfc-editor.org/rfc/rfc8617)) — verification for Go.
@@ -22,14 +22,14 @@ chain.
 An `ARC-Message-Signature` is structurally a DKIM-Signature and an `ARC-Seal` is
 a DKIM-style signature over the ARC headers, so this package builds on the
 canonicalization and signature primitives exported by
-[github.com/rest-mail/dkim](https://github.com/rest-mail/dkim) — ARC
+[github.com/rest-mail/go-dkim](https://github.com/rest-mail/go-dkim) — ARC
 verification is therefore byte-for-byte consistent with DKIM verification over
 the same message.
 
 ## Install
 
 ```sh
-go get github.com/rest-mail/arc
+go get github.com/rest-mail/go-arc
 ```
 
 ## Verify
@@ -46,7 +46,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/rest-mail/arc"
+	"github.com/rest-mail/go-arc"
 )
 
 func main() {
