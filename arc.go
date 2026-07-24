@@ -11,8 +11,8 @@
 //
 // A downstream receiver can then cryptographically confirm the whole chain and
 // trust the earliest hop's assessment even though DKIM or SPF no longer pass
-// directly. This package performs that verification. It is verify-only: it does
-// not add ARC sets (sealing).
+// directly. This package does both sides: Verify checks an existing chain, and
+// Seal adds a new set as a forwarder — what Seal produces, Verify accepts.
 //
 // # Verifying
 //
@@ -28,6 +28,29 @@
 // must verify over the ARC header chain up to its instance. Signing keys are
 // fetched from DNS at <selector>._domainkey.<domain>; pass a dkim.TXTResolver to
 // override the lookup (for tests or a custom resolver), or nil for system DNS.
+//
+// # Sealing
+//
+// Seal is the counterpart to Verify: a forwarder adds one ARC set — an
+// ARC-Authentication-Results, ARC-Message-Signature, and ARC-Seal for instance
+// i=N — and returns the message with the set prepended, ready to relay. It
+// records cv= by verifying the chain it is extending: "none" when there is no
+// prior chain, otherwise the "pass"/"fail" Verify reports for the message as
+// received.
+//
+//	res, err := arc.Seal(ctx, raw, arc.SealOptions{
+//		Domain:      "example.com",
+//		Selector:    "arc",
+//		PrivateKey:  key, // *rsa.PrivateKey, e.g. from dkim.ParsePrivateKey
+//		AuthResults: "example.com; spf=pass smtp.mailfrom=a@example.com",
+//	})
+//	// res.Message is raw with the new ARC set prepended; relay it.
+//
+// The ARC-Message-Signature is structurally a DKIM-Signature and the ARC-Seal a
+// DKIM-style signature over the ARC header chain, both rsa-sha256, so sealing
+// reuses the DKIM signing key and the same go-dkim canonicalization the verifier
+// uses — what Seal produces, Verify (and any conformant RFC 8617 verifier)
+// accepts over the exact transmitted bytes.
 //
 // # Status values
 //

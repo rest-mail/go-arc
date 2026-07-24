@@ -5,7 +5,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/rest-mail/go-arc)](https://goreportcard.com/report/github.com/rest-mail/go-arc)
 
 Authenticated Received Chain ([RFC 8617](https://www.rfc-editor.org/rfc/rfc8617))
-chain verification for Go.
+sealing and verification for Go.
 
 ## About
 
@@ -17,26 +17,30 @@ records what it saw by prepending an ARC set of three header fields:
 downstream receiver can then cryptographically confirm the whole chain and trust
 the earliest hop's assessment even though DKIM or SPF no longer pass directly.
 
-This package performs that verification over the **raw** RFC 5322 message bytes —
-never a parsed or reconstructed representation — so the chain is checked against
-exactly what was transmitted. It is verify-only: it does not add ARC sets
-(sealing).
+This package does both sides of ARC over the **raw** RFC 5322 message bytes —
+never a parsed or reconstructed representation. `arc.Verify` checks an existing
+chain against exactly what was transmitted; `arc.Seal` adds a new ARC set as a
+forwarder would, and what `Seal` produces `Verify` accepts.
 
 ## Features
 
-- Full RFC 8617 §5.2 chain verification: the most recent `ARC-Message-Signature`
-  over the message, plus every `ARC-Seal` over the ARC header chain up to its
-  instance.
+- **Sealing** (`arc.Seal`): add an ARC set — `ARC-Authentication-Results`,
+  `ARC-Message-Signature`, `ARC-Seal` — for instance `i=N`, with `cv=` computed
+  by verifying the chain being extended (`none`/`pass`/`fail`). Returns the
+  message with the set prepended, ready to relay.
+- **Verifying** (`arc.Verify`): full RFC 8617 §5.2 chain verification — the most
+  recent `ARC-Message-Signature` over the message, plus every `ARC-Seal` over the
+  ARC header chain up to its instance.
 - Structural validation: ARC sets must be numbered contiguously `1..N`, each set
   complete.
 - Returns an RFC 8617 chain-validation status — `pass`, `fail`, or `none` — with
   a human-readable reason.
-- Operates on raw message bytes, the same bytes DKIM verifies.
+- Operates on raw message bytes, the same bytes DKIM signs and verifies.
 - Pluggable DNS resolver (`dkim.TXTResolver`) for tests and custom lookups; `nil`
   uses the system resolver.
 - Built on [github.com/rest-mail/go-dkim](https://github.com/rest-mail/go-dkim) —
-  its only dependency — so ARC verification shares DKIM's exact canonicalization
-  and crypto path (`rsa-sha256`, relaxed canonicalization).
+  its only dependency — so ARC shares DKIM's exact canonicalization and crypto
+  path (`rsa-sha256`, relaxed canonicalization); sealing reuses the DKIM key.
 
 ## Install
 
@@ -46,21 +50,16 @@ go get github.com/rest-mail/go-arc
 
 ## Quickstart
 
-In production you receive a message that upstream hops have already sealed, and
-verify it with `arc.Verify(ctx, raw, nil)` — `nil` resolves signing keys over
-system DNS. To make a runnable round trip, the example below also seals one ARC
-set itself (using go-dkim's primitives, since go-arc is verify-only) and serves
-the matching public key from an in-memory resolver.
+Seal a message as a forwarder would, then verify the result — the round trip a
+downstream receiver relies on. In production you would publish the public key as
+a DNS TXT record and pass `nil` for the resolver (system DNS); here an in-memory
+resolver serves the key so the example is self-contained.
 
 ```go
 package main
 
 import (
 	"context"
-	"crypto"
-	"crypto/rand"
-	"crypto/rsa"
-	"encoding/base64"
 	"fmt"
 
 	arc "github.com/rest-mail/go-arc"
@@ -68,8 +67,7 @@ import (
 )
 
 func main() {
-	// One keypair signs the ARC set and answers the key lookup. Keep the private
-	// key for signing; publish the public half as the DNS TXT record.
+	// Keep the private key for signing; publish the public half as the DNS record.
 	privPEM, pubPEM, err := dkim.GenerateKey(2048)
 	if err != nil {
 		panic(err)
@@ -87,8 +85,6 @@ func main() {
 		"\r\n" +
 		"Hello, world!\r\n")
 
-	sealed := sealARC(key, "example.com", "arc", raw)
-
 	// Serve the public key from memory so the round trip needs no real DNS.
 	// In production, pass nil to use the system resolver.
 	txt, _ := dkim.RecordValue(pubPEM)
@@ -99,51 +95,50 @@ func main() {
 		return nil, fmt.Errorf("no record for %s", name)
 	}
 
-	cv, reason := arc.Verify(context.Background(), sealed, resolver)
-	fmt.Printf("%s: %s\n", cv, reason)
-	// Prints: pass: ARC chain cryptographically verified (1 set(s))
-}
-
-// sealARC prepends a single valid ARC set (instance 1) to raw, using only
-// go-dkim's exported primitives — mirroring what a first-hop ARC sealer emits.
-func sealARC(priv *rsa.PrivateKey, domain, selector string, raw []byte) []byte {
-	headers, body := dkim.SplitMessage(raw)
-
-	aar := dkim.Header{
-		Name:  "ARC-Authentication-Results",
-		Value: " i=1; " + domain + "; spf=pass",
-		Raw:   "ARC-Authentication-Results: i=1; " + domain + "; spf=pass",
+	// Seal: add an ARC set as this hop. cv= is computed from the incoming chain
+	// (none here — no prior sets).
+	res, err := arc.Seal(context.Background(), raw, arc.SealOptions{
+		Domain:      "example.com",
+		Selector:    "arc",
+		PrivateKey:  key,
+		AuthResults: "example.com; spf=pass smtp.mailfrom=alice@example.com",
+		Resolver:    resolver,
+	})
+	if err != nil {
+		panic(err)
 	}
 
-	bh := base64.StdEncoding.EncodeToString(
-		dkim.HashBytes(crypto.SHA256, []byte(dkim.CanonicalizeBody(body, "relaxed"))))
-	hTag := "from:to:subject:date:message-id"
-	amsNoB := fmt.Sprintf("i=1; a=rsa-sha256; c=relaxed/relaxed; d=%s; s=%s; h=%s; bh=%s; b=",
-		domain, selector, hTag, bh)
-	amsForSigning := dkim.Header{Name: "ARC-Message-Signature", Value: " " + amsNoB, Raw: "ARC-Message-Signature: " + amsNoB}
-	amsB := signRSA(priv, dkim.BuildSignedHeaders(hTag, headers, amsForSigning, "relaxed"))
-	ams := dkim.Header{
-		Name:  "ARC-Message-Signature",
-		Value: " " + amsNoB + amsB,
-		Raw:   "ARC-Message-Signature: " + amsNoB + amsB,
-	}
-
-	asNoB := fmt.Sprintf("i=1; a=rsa-sha256; d=%s; s=%s; cv=none; b=", domain, selector)
-	asForSigning := dkim.Header{Name: "ARC-Seal", Value: " " + asNoB, Raw: "ARC-Seal: " + asNoB}
-	sealBase := dkim.CanonicalizeHeader(aar, "relaxed") + "\r\n" +
-		dkim.CanonicalizeHeader(ams, "relaxed") + "\r\n" +
-		dkim.CanonicalizeHeader(asForSigning, "relaxed") // final seal: b= empty, no trailing CRLF
-	as := dkim.Header{Name: "ARC-Seal", Raw: "ARC-Seal: " + asNoB + signRSA(priv, sealBase)}
-
-	// ARC sets are prepended highest-instance-first: seal, signature, results.
-	return []byte(as.Raw + "\r\n" + ams.Raw + "\r\n" + aar.Raw + "\r\n" + string(raw))
-}
-
-func signRSA(priv *rsa.PrivateKey, data string) string {
-	sig, _ := rsa.SignPKCS1v15(rand.Reader, priv, crypto.SHA256, dkim.HashBytes(crypto.SHA256, []byte(data)))
-	return base64.StdEncoding.EncodeToString(sig)
+	// Verify what we just sealed.
+	cv, reason := arc.Verify(context.Background(), res.Message, resolver)
+	fmt.Printf("sealed i=%d cv=%s -> verify %s: %s\n", res.Instance, res.ChainValidation, cv, reason)
+	// Prints: sealed i=1 cv=none -> verify pass: ARC chain cryptographically verified (1 set(s))
 }
 ```
+
+## Sealing
+
+`arc.Seal` adds one ARC set for the next hop:
+
+```go
+func Seal(ctx context.Context, rawMessage []byte, opt SealOptions) (*SealResult, error)
+```
+
+`SealOptions` takes the signing identity — `Domain`, `Selector`, and
+`PrivateKey` (a `*rsa.PrivateKey`, e.g. from `dkim.ParsePrivateKey`) — plus the
+`AuthResults` to record and optional canonicalization / `Headers` / `Time` /
+`Resolver` settings. It:
+
+- picks the next instance `i=N` from the ARC sets already in the message;
+- computes `cv=` by verifying the chain it is extending — `none` with no prior
+  chain, else the `pass`/`fail` `Verify` reports (this is the only time `Seal`
+  needs the resolver / DNS);
+- builds the three header fields and returns a `*SealResult` whose `Message` is
+  `rawMessage` with the new set prepended, ready to relay (the individual `AAR`,
+  `AMS`, and `AS` fields and the `Instance` / `ChainValidation` are exposed too).
+
+The signing key is reused from DKIM: an `ARC-Message-Signature` is a
+`DKIM-Signature` and an `ARC-Seal` a DKIM-style signature over the ARC header
+chain, both `rsa-sha256`.
 
 ## Verifying
 
