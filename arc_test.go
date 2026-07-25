@@ -188,6 +188,59 @@ func TestVerifyARC_TamperedSealFails(t *testing.T) {
 	}
 }
 
+// TestVerifyARC_AMSVersionTagIgnored covers RFC 8617 §4.1.2: an
+// ARC-Message-Signature has DKIM-Signature syntax but the v= tag is not part of
+// it. A conformant AMS carries no v=, but an errant one (e.g. v=DKIM1 copied from
+// DKIM code, or inserted in transit) must be IGNORED, not fail the whole chain.
+// Here a fully valid single-set chain is sealed (AMS and ARC-Seal signed over the
+// AMS's real, v=-free bytes), then an unexpected v=DKIM1 is injected into the
+// transmitted AMS. Verify must still report "pass": the DKIM version rule
+// (RFC 6376 §3.5, which rejects v= not equal to 1) must not be applied to the
+// AMS. Before the fix, Verify delegated AMS verification straight to
+// dkim.VerifySignature, whose version rule rejected v=DKIM1 and failed the chain.
+func TestVerifyARC_AMSVersionTagIgnored(t *testing.T) {
+	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
+	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
+	raw := sealChain(t, priv, "example.test", "arc", 1)
+
+	// Inject an unexpected v= into the transmitted AMS as a clean tag (RFC 8617
+	// says it is not part of the AMS, so a verifier strips it before checking).
+	withV := strings.Replace(raw,
+		"ARC-Message-Signature: i=1; ",
+		"ARC-Message-Signature: i=1; v=DKIM1; ", 1)
+	if withV == raw {
+		t.Fatal("test setup: failed to inject v= into the ARC-Message-Signature")
+	}
+
+	cv, reason := Verify(context.Background(), []byte(withV), resolver)
+	if cv != "pass" {
+		t.Fatalf("AMS with an unexpected v= must be ignored (still pass), got %s (%s)", cv, reason)
+	}
+}
+
+// TestVerifyARC_AMSVersionTagStillFailsOnTamper is the malformed counterpart: an
+// unexpected v= on the AMS is ignored, but ignoring it must not mask a real
+// breakage. A chain whose body is tampered must still fail even when the AMS also
+// carries a v= tag — the AMS signature verification (over every byte but the
+// stripped v=) still runs.
+func TestVerifyARC_AMSVersionTagStillFailsOnTamper(t *testing.T) {
+	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
+	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
+	raw := sealChain(t, priv, "example.test", "arc", 1)
+	withV := strings.Replace(raw,
+		"ARC-Message-Signature: i=1; ",
+		"ARC-Message-Signature: i=1; v=DKIM1; ", 1)
+	tampered := strings.Replace(withV, "ARC body.", "TAMPERED.", 1)
+
+	cv, reason := Verify(context.Background(), []byte(tampered), resolver)
+	if cv != "fail" {
+		t.Fatalf("tampered body must fail even with an unexpected AMS v=, got %s (%s)", cv, reason)
+	}
+	if !strings.Contains(reason, "ARC-Message-Signature") {
+		t.Errorf("expected an AMS failure reason, got: %s", reason)
+	}
+}
+
 func TestVerifyARC_NoChain(t *testing.T) {
 	cv, _ := Verify(context.Background(), []byte("From: a@b.test\r\nSubject: x\r\n\r\nbody\r\n"),
 		func(context.Context, string) ([]string, error) { return nil, nil })
