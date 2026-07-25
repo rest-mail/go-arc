@@ -218,6 +218,24 @@ func verifyARCSeal(ctx context.Context, chain []*arcSet, resolver dkim.TXTResolv
 	if !strings.EqualFold(tags["a"], "rsa-sha256") {
 		return dkim.ResultPermError, "unsupported ARC-Seal algorithm " + tags["a"]
 	}
+
+	// RFC 8617 §4.1.3: the ARC-Seal's s= (selector) and d= (domain) are REQUIRED
+	// tags — together they name the public key at s=._domainkey.d= that verifies
+	// the seal. A seal missing either is malformed and MUST NOT verify. This guard
+	// is load-bearing, not defensive: dkim.FetchKey/dkim.RecordName substitute the
+	// selector "default" for an empty s=, so a seal that simply omits s= would
+	// otherwise resolve default._domainkey.<d> and verify against whatever key
+	// happens to live there — a verification-integrity hole where an attacker drops
+	// s= to pivot onto a selector that resolves. Reject the seal (chain status
+	// "fail") here rather than fall back to a substituted selector. (The AMS path
+	// is already safe: it verifies via dkim.VerifySignature, which requires s=.)
+	if tags["s"] == "" {
+		return dkim.ResultPermError, "ARC-Seal missing required s= (selector) tag"
+	}
+	if tags["d"] == "" {
+		return dkim.ResultPermError, "ARC-Seal missing required d= (domain) tag"
+	}
+
 	base := arcSealBase(chain)
 
 	sigBytes, err := base64.StdEncoding.DecodeString(dkim.StripWSP(tags["b"]))
