@@ -108,6 +108,16 @@ func Seal(ctx context.Context, rawMessage []byte, opt SealOptions) (*SealResult,
 	if opt.Domain == "" || opt.Selector == "" || opt.PrivateKey == nil {
 		return nil, fmt.Errorf("arc.Seal: domain, selector and private key are required")
 	}
+	// Reject caller-supplied strings carrying a bare CR or LF before they are
+	// interpolated into header field values. Seal writes Domain and Selector into
+	// the d=/s= tags and AuthResults into the ARC-Authentication-Results content
+	// with fmt.Sprintf; a CRLF in any of them would fold in additional header
+	// fields — a header injection turning one sealed field into several. RFC 5322
+	// header field values contain no bare CR or LF, so refuse them here rather than
+	// emit a malformed, attacker-shaped message.
+	if err := rejectHeaderInjection(opt); err != nil {
+		return nil, err
+	}
 	headerCanon := opt.HeaderCanon
 	if headerCanon == "" {
 		headerCanon = "relaxed"
@@ -265,8 +275,22 @@ func priorChain(headers []dkim.Header) ([]*arcSet, int, error) {
 	return ordered, highest, nil
 }
 
-// amsHeaderTag builds the ARC-Message-Signature h= tag: the requested headers
-// (or the default set) filtered to those actually present, lowercased.
+// amsExcludedHeaders are header field names an ARC-Message-Signature h= tag MUST
+// NOT list (RFC 8617 §4.1.2): the ARC-* fields — which the ARC set itself adds or
+// which prior sets already carry — and Authentication-Results, a hop-local trace
+// field. Binding the AMS to fields that are added or rewritten in transit would
+// break the very chain the AMS anchors, so amsHeaderTag drops them even when a
+// caller requests them.
+var amsExcludedHeaders = map[string]bool{
+	"arc-authentication-results": true,
+	"arc-message-signature":      true,
+	"arc-seal":                   true,
+	"authentication-results":     true,
+}
+
+// amsHeaderTag builds the ARC-Message-Signature h= tag: the requested headers (or
+// the default set), lowercased, filtered to those actually present and not in
+// amsExcludedHeaders (RFC 8617 §4.1.2).
 func amsHeaderTag(headers []dkim.Header, want []string) string {
 	if len(want) == 0 {
 		want = defaultAMSHeaders
@@ -278,11 +302,28 @@ func amsHeaderTag(headers []dkim.Header, want []string) string {
 	var signed []string
 	for _, name := range want {
 		n := strings.ToLower(strings.TrimSpace(name))
-		if n != "" && present[n] {
+		if n != "" && present[n] && !amsExcludedHeaders[n] {
 			signed = append(signed, n)
 		}
 	}
 	return strings.Join(signed, ":")
+}
+
+// rejectHeaderInjection refuses caller-supplied Seal inputs that carry a bare CR
+// or LF, which would inject additional header fields when interpolated into the
+// emitted ARC set (see Seal). Domain and Selector reach the d=/s= tags; AuthResults
+// reaches the ARC-Authentication-Results content.
+func rejectHeaderInjection(opt SealOptions) error {
+	for _, f := range []struct{ name, val string }{
+		{"Domain", opt.Domain},
+		{"Selector", opt.Selector},
+		{"AuthResults", opt.AuthResults},
+	} {
+		if strings.ContainsAny(f.val, "\r\n") {
+			return fmt.Errorf("arc.Seal: %s must not contain CR or LF (header injection)", f.name)
+		}
+	}
+	return nil
 }
 
 // signRSA hashes data with SHA-256 and returns the base64-encoded RSA signature.

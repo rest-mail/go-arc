@@ -297,9 +297,29 @@ func collectARCSets(headers []dkim.Header) (map[int]*arcSet, error) {
 			name != "arc-seal" {
 			continue
 		}
-		i := arcInstance(h.Value)
-		if i < 1 {
-			continue
+		// This IS an ARC header field. From here any structural defect fails the
+		// whole collection — chain status "fail" for Verify, a malformed-chain error
+		// for Seal — rather than being silently skipped: a field named ARC-* but
+		// carrying a malformed i= means the message bears a BROKEN chain, not none.
+		// The old strconv.Atoi path mapped i=0, i=-3, and an overflowing
+		// i=99999999999999999999 all to 0 and dropped the set (i<1 == "not an ARC
+		// header"), so a message that plainly carries ARC returned "none" instead of
+		// "fail" (RFC 8617 §5.2).
+		i, err := arcInstance(h.Value)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", h.Name, err)
+		}
+		// RFC 6376 §3.2: a DKIM tag list with a repeated tag name is invalid. The
+		// ARC-Message-Signature and ARC-Seal are DKIM tag lists, so a duplicate tag
+		// in either fails the chain rather than silently taking dkim.ParseTagList's
+		// last-wins value (a parser-differential another verifier may resolve to the
+		// first). The ARC-Authentication-Results is Authentication-Results syntax,
+		// not a DKIM tag list — its methods legally repeat (e.g. two dkim= results) —
+		// so only its i= uniqueness, checked by arcInstance above, is enforced.
+		if name != "arc-authentication-results" {
+			if dup := firstDuplicateTag(h.Value); dup != "" {
+				return nil, fmt.Errorf("%s (i=%d) has a duplicate %s= tag (RFC 6376 §3.2)", h.Name, i, dup)
+			}
 		}
 		if sets[i] == nil {
 			sets[i] = &arcSet{}
@@ -331,14 +351,101 @@ func collectARCSets(headers []dkim.Header) (map[int]*arcSet, error) {
 	return sets, nil
 }
 
-// arcInstance extracts the i= instance number from an ARC header value.
-func arcInstance(value string) int {
-	if v := dkim.ParseTagList(value)["i"]; v != "" {
-		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
-			return n
+// maxInstance is the RFC 8617 §5.1.1 ceiling on an individual ARC set's instance
+// number: i ranges over 1..50. It equals maxARCSets — a contiguous chain's highest
+// instance is its set count — but names the per-set range constraint arcInstance
+// enforces, distinct from the chain-length ceiling Verify checks.
+const maxInstance = maxARCSets
+
+// arcInstance extracts and validates the i= instance number of an ARC header
+// value. A conformant instance is a bare decimal in 1..50 (RFC 8617 §4.1.1
+// "instance = 1*2DIGIT", §5.1.1 range) appearing exactly once: no sign, no
+// leading zero, no surrounding cruft, no overflow. It returns the parsed instance
+// on success, or a non-nil error naming the defect — absent, duplicated,
+// zero-padded, non-numeric, or out of range. collectARCSets turns that error into
+// chain-validation "fail", so a field that IS an ARC header but carries a
+// malformed i= is treated as a broken chain rather than silently skipped as if the
+// message carried no ARC at all.
+func arcInstance(value string) (int, error) {
+	var raw string
+	count := 0
+	for _, kv := range tagPairs(value) {
+		if strings.EqualFold(kv[0], "i") {
+			count++
+			raw = kv[1]
 		}
 	}
-	return 0
+	switch {
+	case count == 0:
+		return 0, fmt.Errorf("missing required i= instance tag")
+	case count > 1:
+		return 0, fmt.Errorf("duplicate i= instance tag (RFC 6376 §3.2)")
+	}
+	if !validInstanceDigits(raw) {
+		return 0, fmt.Errorf("malformed i= instance %q (want a 1..%d decimal with no sign or leading zero)", raw, maxInstance)
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > maxInstance {
+		return 0, fmt.Errorf("i= instance %q out of range 1..%d", raw, maxInstance)
+	}
+	return n, nil
+}
+
+// validInstanceDigits reports whether s is the canonical decimal form of an ARC
+// instance: 1 or 2 ASCII digits with no leading zero (RFC 8617 §4.1.1
+// "instance = 1*2DIGIT", canonical). It rejects "" , "007"/"01" (zero-padded or
+// >2 digits), "0", "-3", "+1", "1 ", "1a", and any overflow, so only 1..99 in
+// canonical form pass here; arcInstance additionally enforces the 1..50 range.
+func validInstanceDigits(s string) bool {
+	if len(s) < 1 || len(s) > 2 {
+		return false
+	}
+	if s[0] < '1' || s[0] > '9' { // first digit non-zero: no leading zero, no sign
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// tagPairs splits a DKIM-style tag list ("k=v; k2=v2") into ordered (name, value)
+// pairs, trimming FWS around each, WITHOUT the last-wins collapse
+// dkim.ParseTagList performs. Preserving order and every occurrence lets callers
+// enforce RFC 6376 §3.2 (a repeated tag name invalidates the list) and count a
+// specific tag. Segments without '=' or with an empty name are skipped, matching
+// ParseTagList.
+func tagPairs(s string) [][2]string {
+	var out [][2]string
+	for _, seg := range strings.Split(s, ";") {
+		eq := strings.IndexByte(seg, '=')
+		if eq < 0 {
+			continue
+		}
+		key := strings.TrimSpace(seg[:eq])
+		if key == "" {
+			continue
+		}
+		out = append(out, [2]string{key, strings.TrimSpace(seg[eq+1:])})
+	}
+	return out
+}
+
+// firstDuplicateTag returns the (lowercased) name of the first tag that appears
+// more than once in a DKIM-style tag list, or "" if every tag name is unique.
+// RFC 6376 §3.2: a tag list carrying a duplicate tag name is invalid.
+func firstDuplicateTag(s string) string {
+	seen := map[string]bool{}
+	for _, kv := range tagPairs(s) {
+		k := strings.ToLower(kv[0])
+		if seen[k] {
+			return k
+		}
+		seen[k] = true
+	}
+	return ""
 }
 
 // stripAMSVersionTag returns a copy of an ARC-Message-Signature header with any
