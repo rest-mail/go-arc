@@ -168,6 +168,8 @@ Full API reference:
 
 Recent releases (see [CHANGELOG.md](CHANGELOG.md) for the full history):
 
+- **v0.2.3** — Verify now requires the ARC-Message-Signature to sign From
+  (RFC 8617 §5.1.1); an AMS whose `h=` omits From is treated as cv=fail.
 - **v0.2.2** — restore ARC-Message-Signature verification via go-dkim v0.2.1's
   policy-free primitive (fixing the regression from DKIM's `v=` requirement);
   RFC 8617 verify/seal fixes: 50-set cap, `cv=fail` seal scope, reject seal `h=`,

@@ -205,6 +205,19 @@ func Verify(ctx context.Context, rawMessage []byte, resolver dkim.TXTResolver) (
 		return "fail", fmt.Sprintf("ARC-Message-Signature (i=%d) %s: %s", n, amsRes.Result, amsRes.Reason)
 	}
 
+	// RFC 8617 §5.1.1: the ARC-Message-Signature MUST sign the From header. The
+	// crypto check above uses dkim.VerifySignatureBare, which is policy-free by
+	// design (RFC 8617 §4.1.2) and so — unlike dkim.VerifySignature — does NOT
+	// impose DKIM's From-must-be-signed rule. Assert it here in the ARC layer,
+	// against the AMS's already-parsed h= tag list: an AMS whose h= does not cover
+	// From does not bind the author identity, so the message signature is invalid
+	// and the chain is broken (cv=fail), even though the signature is otherwise
+	// cryptographically valid. Parsing from the same collected AMS keeps this
+	// byte-consistent with the field the crypto check and the seal chain saw.
+	if !amsSignsFrom(dkim.ParseTagList(sets[n].ams.Value)["h"]) {
+		return "fail", fmt.Sprintf("ARC-Message-Signature (i=%d) h= does not sign the From header (RFC 8617 §5.1.1)", n)
+	}
+
 	// 2. Every ARC-Seal must verify over the ARC header chain up to its instance.
 	ordered := make([]*arcSet, 0, n)
 	for _, i := range instances {
@@ -293,6 +306,22 @@ func arcSealBase(chain []*arcSet) string {
 		}
 	}
 	return b.String()
+}
+
+// amsSignsFrom reports whether an ARC-Message-Signature h= tag list names the
+// From header, as RFC 8617 §5.1.1 requires the AMS to do. The h= value is a
+// colon-separated list of signed header field names; the match is on a whole
+// entry (after trimming folding whitespace) and case-insensitive, so "from" or
+// "From" counts but a different header whose name merely contains "from" (e.g.
+// "x-from") does not. An empty or From-less h= returns false — the AMS does not
+// cover the author identity and the chain must not verify.
+func amsSignsFrom(hTag string) bool {
+	for _, name := range strings.Split(hTag, ":") {
+		if strings.EqualFold(strings.TrimSpace(name), "from") {
+			return true
+		}
+	}
+	return false
 }
 
 // collectARCSets parses a header block's ARC fields into per-instance sets,
