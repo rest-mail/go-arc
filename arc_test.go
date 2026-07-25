@@ -32,12 +32,20 @@ func arcBaseMessage() string {
 	}, "\r\n")
 }
 
-// signAMS builds an ARC-Message-Signature value (DKIM-style) over msgHeaders+body.
+// signAMS builds an ARC-Message-Signature value (DKIM-style) over msgHeaders+body,
+// signing the default header set (which includes From, per RFC 8617 §5.1.1).
 func signAMS(t *testing.T, priv *rsa.PrivateKey, d, s string, i int, msgHeaders []dkim.Header, body string) string {
+	t.Helper()
+	return signAMSH(t, priv, d, s, i, "from:to:subject:date:message-id", msgHeaders, body)
+}
+
+// signAMSH is signAMS with a caller-supplied h= tag list, letting a test build an
+// ARC-Message-Signature that (incorrectly) omits From while remaining
+// cryptographically valid over exactly the headers it names.
+func signAMSH(t *testing.T, priv *rsa.PrivateKey, d, s string, i int, hTag string, msgHeaders []dkim.Header, body string) string {
 	t.Helper()
 	bodyHash := dkim.HashBytes(crypto.SHA256, []byte(dkim.CanonicalizeBody(body, "relaxed")))
 	bh := base64.StdEncoding.EncodeToString(bodyHash)
-	hTag := "from:to:subject:date:message-id"
 	valueNoB := fmt.Sprintf("i=%d; a=rsa-sha256; c=relaxed/relaxed; d=%s; s=%s; h=%s; bh=%s; b=", i, d, s, hTag, bh)
 	sigHeader := dkim.Header{Name: "ARC-Message-Signature", Value: " " + valueNoB, Raw: "ARC-Message-Signature: " + valueNoB}
 	signed := dkim.BuildSignedHeaders(hTag, msgHeaders, sigHeader, "relaxed")
@@ -101,6 +109,25 @@ func sealChainSealH(t *testing.T, priv *rsa.PrivateKey, d, s, hTag string) strin
 	set := &arcSet{aar: aar, ams: ams}
 	chain := []*arcSet{set}
 	set.as = mkHeader("ARC-Seal", signASWithH(t, priv, d, s, 1, "none", hTag, chain))
+
+	block := set.as.Raw + "\r\n" + set.ams.Raw + "\r\n" + set.aar.Raw + "\r\n"
+	return block + base
+}
+
+// sealChainAMSH builds a valid single-set ARC message whose ARC-Message-Signature
+// signs exactly the headers named by hTag (letting a test omit From), sealed over
+// its own bytes so every signature is cryptographically intact. The returned
+// message differs from a conformant one only by which headers the AMS h= names.
+func sealChainAMSH(t *testing.T, priv *rsa.PrivateKey, d, s, hTag string) string {
+	t.Helper()
+	base := arcBaseMessage()
+	msgHeaders, body := dkim.SplitMessage([]byte(base))
+
+	aar := mkHeader("ARC-Authentication-Results", "i=1; example.test; spf=pass")
+	ams := mkHeader("ARC-Message-Signature", signAMSH(t, priv, d, s, 1, hTag, msgHeaders, body))
+	set := &arcSet{aar: aar, ams: ams}
+	chain := []*arcSet{set}
+	set.as = mkHeader("ARC-Seal", signAS(t, priv, d, s, 1, "none", chain))
 
 	block := set.as.Raw + "\r\n" + set.ams.Raw + "\r\n" + set.aar.Raw + "\r\n"
 	return block + base
@@ -355,6 +382,45 @@ func TestVerifyARC_SealWithHTagRejected(t *testing.T) {
 			}
 			if !strings.Contains(reason, "h=") {
 				t.Errorf("expected a forbidden-h= reason, got: %s", reason)
+			}
+		})
+	}
+}
+
+// TestVerifyARC_AMSMustSignFrom covers RFC 8617 §5.1.1: the ARC-Message-Signature
+// MUST sign the From header. An AMS whose h= omits From is cryptographically
+// intact over exactly the headers it names (the seal covers those AMS bytes), but
+// the message signature does not bind the author identity, so a verifier MUST
+// treat the chain as broken (cv=fail). Before the fix, Verify delegated the AMS
+// check to dkim.VerifySignatureBare — policy-free by design, so it applied no
+// From-must-be-signed rule — and an AMS with h=to:subject:date verified as
+// "pass". A conformant AMS whose h= includes From (any case) must still pass.
+func TestVerifyARC_AMSMustSignFrom(t *testing.T) {
+	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
+	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
+
+	// Positive controls: an AMS whose h= names From (case-insensitively) must pass.
+	for _, hTag := range []string{"from:to:subject:date:message-id", "To:From:Subject:Date:Message-ID"} {
+		t.Run("signs_from/"+hTag, func(t *testing.T) {
+			raw := sealChainAMSH(t, priv, "example.test", "arc", hTag)
+			if cv, reason := Verify(context.Background(), []byte(raw), resolver); cv != "pass" {
+				t.Fatalf("AMS signing From must pass, got %s (%s)", cv, reason)
+			}
+		})
+	}
+
+	// The bug: an AMS whose h= omits From must fail the chain. "date:subject" plus
+	// a bare "fromm"/"x-from" confirm the match is a whole-entry token, not a
+	// substring of some other signed header name.
+	for _, hTag := range []string{"to:subject:date:message-id", "subject", "date:x-from:message-id"} {
+		t.Run("omits_from/"+hTag, func(t *testing.T) {
+			raw := sealChainAMSH(t, priv, "example.test", "arc", hTag)
+			cv, reason := Verify(context.Background(), []byte(raw), resolver)
+			if cv != "fail" {
+				t.Fatalf("AMS whose h= omits From must fail (RFC 8617 §5.1.1), got %s (%s)", cv, reason)
+			}
+			if !strings.Contains(reason, "From") {
+				t.Errorf("expected a From-not-signed reason, got: %s", reason)
 			}
 		})
 	}

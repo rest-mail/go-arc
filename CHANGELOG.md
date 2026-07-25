@@ -3,6 +3,18 @@
 All notable changes to go-arc are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.2.3
+
+A single RFC 8617 §5.1.1 hardening fix on the verify path: the
+ARC-Message-Signature must sign the From header. The public API (`Seal`,
+`Verify`, `SealOptions`, `SealResult`) is unchanged.
+
+### Fixed
+
+- Verify now requires the ARC-Message-Signature to sign the From header
+  (RFC 8617 §5.1.1); a chain whose AMS `h=` omits From is treated as cv=fail
+  (#31).
+
 ## v0.2.2
 
 Restores ARC-Message-Signature verification — which regressed once go-dkim began
