@@ -189,7 +189,18 @@ func Verify(ctx context.Context, rawMessage []byte, resolver dkim.TXTResolver) (
 	}
 
 	// 1. The most recent ARC-Message-Signature must verify over the message.
-	amsRes := dkim.VerifySignature(ctx, *sets[n].ams, headers, body, resolver)
+	//
+	// Verify only the DKIM crypto MECHANISM here, via the policy-free primitive:
+	// an ARC-Message-Signature is structurally a DKIM-Signature but versionless by
+	// design (RFC 8617 §4.1.2) and governed by ARC's rules, not RFC 6376 DKIM
+	// policy. dkim.VerifySignature would PERMFAIL it on the missing v= tag (and
+	// would additionally impose From-signed / i= alignment / t=/x= timing / key
+	// t=s / s= flags that the AMS does not answer to). dkim.VerifySignatureBare
+	// runs the same header-select + canonicalize + hash + RSA-verify against the
+	// d=/s= key with NONE of that policy; a ResultPass means the AMS crypto is
+	// valid. ARC's own policy — chain cv=, contiguous instance ordering, seal
+	// h=-prohibited, seal s=/d= required — stays enforced above in this function.
+	amsRes := dkim.VerifySignatureBare(ctx, *sets[n].ams, headers, body, resolver)
 	if amsRes.Result != dkim.ResultPass {
 		return "fail", fmt.Sprintf("ARC-Message-Signature (i=%d) %s: %s", n, amsRes.Result, amsRes.Reason)
 	}
@@ -228,7 +239,8 @@ func verifyARCSeal(ctx context.Context, chain []*arcSet, resolver dkim.TXTResolv
 	// happens to live there — a verification-integrity hole where an attacker drops
 	// s= to pivot onto a selector that resolves. Reject the seal (chain status
 	// "fail") here rather than fall back to a substituted selector. (The AMS path
-	// is already safe: it verifies via dkim.VerifySignature, which requires s=.)
+	// is already safe: it verifies via dkim.VerifySignatureBare, which — like the
+	// full primitive — requires s= among its mechanism tags.)
 	if tags["s"] == "" {
 		return dkim.ResultPermError, "ARC-Seal missing required s= (selector) tag"
 	}
@@ -242,7 +254,13 @@ func verifyARCSeal(ctx context.Context, chain []*arcSet, resolver dkim.TXTResolv
 	if err != nil {
 		return dkim.ResultPermError, "invalid ARC-Seal b= base64"
 	}
-	pub, kres := dkim.FetchKey(ctx, tags["s"], tags["d"], resolver)
+	// The seal is constrained to rsa-sha256 (checked above), so the key is fetched
+	// with hashAlg "sha256". Deliberately IGNORE the returned KeyFlags for the
+	// seal: t=s constrains an AUID i=, but an ARC-Seal's i= is the instance
+	// number, and s= service-type is a DKIM email-signature rule RFC 8617 does not
+	// direct the seal to reject on — honouring either would newly fail chains that
+	// verified before.
+	pub, _, kres := dkim.FetchKey(ctx, tags["s"], tags["d"], "sha256", resolver)
 	if kres != "" {
 		return kres, "ARC-Seal key lookup for " + dkim.RecordName(tags["s"], tags["d"])
 	}
