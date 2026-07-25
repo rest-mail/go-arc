@@ -280,6 +280,36 @@ func TestVerifyARC_InconsistentCV(t *testing.T) {
 	}
 }
 
+// TestVerifyARC_MaxSetsEnforced covers RFC 8617 §5.2 step 1 / §5.1.1: a message
+// may carry at most 50 ARC sets. A chain of exactly 50 is valid and must verify;
+// a chain of 51 — even one whose every signature is cryptographically intact —
+// must fail, and the ceiling must be enforced before the per-seal cryptography
+// so an oversized chain cannot drive the verifier's superlinear work (each
+// ARC-Seal is re-canonicalized over every prior set, O(n²), plus one DNS lookup
+// per set — a denial-of-service vector). Before the fix, Verify had no length
+// guard and returned "pass" for the 51-set chain.
+func TestVerifyARC_MaxSetsEnforced(t *testing.T) {
+	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
+	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
+
+	// Exactly at the ceiling: a 50-set chain is valid and must verify.
+	atMax := sealChain(t, priv, "example.test", "arc", maxARCSets)
+	if cv, reason := Verify(context.Background(), []byte(atMax), resolver); cv != "pass" {
+		t.Fatalf("%d-set chain (the maximum) must pass, got %s (%s)", maxARCSets, cv, reason)
+	}
+
+	// One past the ceiling: a 51-set chain is invalid regardless of crypto.
+	overMax := sealChain(t, priv, "example.test", "arc", maxARCSets+1)
+	cv, reason := Verify(context.Background(), []byte(overMax), resolver)
+	if cv != "fail" {
+		t.Fatalf("%d-set chain exceeds the RFC 8617 max of %d and must fail, got %s (%s)",
+			maxARCSets+1, maxARCSets, cv, reason)
+	}
+	if !strings.Contains(reason, "50") {
+		t.Errorf("expected a max-sets reason mentioning the ceiling, got: %s", reason)
+	}
+}
+
 func TestVerifyARC_WrongKeyFails(t *testing.T) {
 	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
 	other, _ := rsa.GenerateKey(rand.Reader, 1024)

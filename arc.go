@@ -131,6 +131,16 @@ func Verify(ctx context.Context, rawMessage []byte, resolver dkim.TXTResolver) (
 	sort.Ints(instances)
 	n := len(instances)
 
+	// RFC 8617 §5.2 step 1 / §5.1.1: a message may carry at most 50 ARC sets. If
+	// more exist, the chain-validation status is "fail" and the algorithm stops
+	// here — before any structural or cryptographic checks. Enforcing the ceiling
+	// first also bounds the work an inbound message can drive: each ARC-Seal is
+	// verified by re-canonicalizing every prior set (O(n²)) with one DNS key
+	// lookup per set, so an unbounded chain is a denial-of-service vector.
+	if n > maxARCSets {
+		return "fail", fmt.Sprintf("ARC chain has %d sets, exceeding the RFC 8617 maximum of %d", n, maxARCSets)
+	}
+
 	// Chain must be contiguous 1..N with every set complete.
 	for pos, i := range instances {
 		if i != pos+1 {
