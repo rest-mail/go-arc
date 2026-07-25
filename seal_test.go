@@ -211,6 +211,39 @@ func TestSeal_BrokenIncomingChainRecordsFail(t *testing.T) {
 	}
 }
 
+// TestSeal_DuplicateIncomingChainRejected confirms Seal refuses to extend an
+// incoming chain that carries a duplicate ARC field at some instance (RFC 8617
+// §5.1.1): the set is malformed and cannot be deterministically sealed over, so
+// Seal returns an error rather than picking one copy.
+func TestSeal_DuplicateIncomingChainRejected(t *testing.T) {
+	priv, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
+
+	for _, name := range []string{"ARC-Seal", "ARC-Message-Signature", "ARC-Authentication-Results"} {
+		t.Run(name, func(t *testing.T) {
+			raw := sealChain(t, priv, "example.test", "arc", 1)
+			dup := duplicateFirstHeader(t, raw, name)
+
+			_, err := Seal(context.Background(), []byte(dup), SealOptions{
+				Domain:      "example.test",
+				Selector:    "arc",
+				PrivateKey:  priv,
+				AuthResults: "example.test; arc=fail",
+				Resolver:    resolver,
+			})
+			if err == nil {
+				t.Fatalf("want error sealing over duplicate %s, got nil", name)
+			}
+			if !strings.Contains(err.Error(), "malformed") {
+				t.Errorf("expected a malformed-chain error, got: %v", err)
+			}
+		})
+	}
+}
+
 // TestSeal_RequiredOptions rejects missing signing identity.
 func TestSeal_RequiredOptions(t *testing.T) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
