@@ -236,3 +236,49 @@ func TestVerifyARC_WrongKeyFails(t *testing.T) {
 		t.Errorf("want fail with wrong key, got %s", cv)
 	}
 }
+
+// duplicateFirstHeader returns raw with a verbatim copy of its first field named
+// name inserted immediately after the original, giving the message two of that
+// ARC field at the same instance.
+func duplicateFirstHeader(t *testing.T, raw, name string) string {
+	t.Helper()
+	pieces := strings.SplitAfter(raw, "\r\n") // keep CRLF terminators attached
+	for i, ln := range pieces {
+		if strings.HasPrefix(ln, name+":") {
+			out := make([]string, 0, len(pieces)+1)
+			out = append(out, pieces[:i+1]...)
+			out = append(out, ln)
+			out = append(out, pieces[i+1:]...)
+			return strings.Join(out, "")
+		}
+	}
+	t.Fatalf("header %q not found in message", name)
+	return ""
+}
+
+// TestVerifyARC_DuplicateFieldRejected covers RFC 8617 §5.1.1 / §5.2 step 3A: a
+// valid ARC set contains exactly one each of the three ARC header fields. A
+// second copy of any field at the same instance makes the set — and the chain —
+// malformed, so Verify must return "fail". A verifier that keeps "last wins"
+// silently accepts the extra copy (whose bytes are identical here, so every
+// signature still verifies) and reports "pass", a parser-differential an
+// attacker can exploit against verifiers that instead keep the first copy.
+func TestVerifyARC_DuplicateFieldRejected(t *testing.T) {
+	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
+	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
+
+	for _, name := range []string{"ARC-Seal", "ARC-Message-Signature", "ARC-Authentication-Results"} {
+		t.Run(name, func(t *testing.T) {
+			raw := sealChain(t, priv, "example.test", "arc", 1)
+			dup := duplicateFirstHeader(t, raw, name)
+
+			cv, reason := Verify(context.Background(), []byte(dup), resolver)
+			if cv != "fail" {
+				t.Fatalf("want fail on duplicate %s, got %s (%s)", name, cv, reason)
+			}
+			if !strings.Contains(reason, "duplicate") {
+				t.Errorf("expected a duplicate-field reason, got: %s", reason)
+			}
+		})
+	}
+}

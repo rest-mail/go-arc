@@ -114,27 +114,9 @@ func Verify(ctx context.Context, rawMessage []byte, resolver dkim.TXTResolver) (
 	}
 	headers, body := dkim.SplitMessage(rawMessage)
 
-	sets := map[int]*arcSet{}
-	get := func(i int) *arcSet {
-		if sets[i] == nil {
-			sets[i] = &arcSet{}
-		}
-		return sets[i]
-	}
-	for idx := range headers {
-		h := &headers[idx]
-		i := arcInstance(h.Value)
-		if i < 1 {
-			continue
-		}
-		switch strings.ToLower(h.Name) {
-		case "arc-authentication-results":
-			get(i).aar = h
-		case "arc-message-signature":
-			get(i).ams = h
-		case "arc-seal":
-			get(i).as = h
-		}
+	sets, err := collectARCSets(headers)
+	if err != nil {
+		return "fail", err.Error()
 	}
 	if len(sets) == 0 {
 		return "none", "no ARC sets present"
@@ -250,6 +232,55 @@ func arcSealBase(chain []*arcSet) string {
 		}
 	}
 	return b.String()
+}
+
+// collectARCSets parses a header block's ARC fields into per-instance sets,
+// keyed by their i= tag. It enforces RFC 8617 §5.1.1 / §5.2 step 3A: a valid ARC
+// set contains exactly one each of ARC-Authentication-Results,
+// ARC-Message-Signature, and ARC-Seal. A second field of the same type at the
+// same instance makes that set — and the whole chain — malformed, so
+// collectARCSets returns an error naming the instance and field rather than
+// letting a later copy overwrite an earlier one. Silently keeping "last wins"
+// (or "first wins") is a parser-differential: two verifiers can select different
+// copies and reach different verdicts over the same bytes. Callers treat the
+// error as chain-validation "fail".
+func collectARCSets(headers []dkim.Header) (map[int]*arcSet, error) {
+	sets := map[int]*arcSet{}
+	for idx := range headers {
+		h := &headers[idx]
+		name := strings.ToLower(h.Name)
+		if name != "arc-authentication-results" &&
+			name != "arc-message-signature" &&
+			name != "arc-seal" {
+			continue
+		}
+		i := arcInstance(h.Value)
+		if i < 1 {
+			continue
+		}
+		if sets[i] == nil {
+			sets[i] = &arcSet{}
+		}
+		s := sets[i]
+		switch name {
+		case "arc-authentication-results":
+			if s.aar != nil {
+				return nil, fmt.Errorf("i=%d duplicate ARC-Authentication-Results", i)
+			}
+			s.aar = h
+		case "arc-message-signature":
+			if s.ams != nil {
+				return nil, fmt.Errorf("i=%d duplicate ARC-Message-Signature", i)
+			}
+			s.ams = h
+		case "arc-seal":
+			if s.as != nil {
+				return nil, fmt.Errorf("i=%d duplicate ARC-Seal", i)
+			}
+			s.as = h
+		}
+	}
+	return sets, nil
 }
 
 // arcInstance extracts the i= instance number from an ARC header value.

@@ -127,7 +127,10 @@ func Seal(ctx context.Context, rawMessage []byte, opt SealOptions) (*SealResult,
 	}
 
 	headers, body := dkim.SplitMessage(rawMessage)
-	prior := priorChain(headers)
+	prior, err := priorChain(headers)
+	if err != nil {
+		return nil, fmt.Errorf("arc.Seal: incoming ARC chain malformed: %w", err)
+	}
 	instance := len(prior) + 1
 	if instance > maxARCSets {
 		return nil, fmt.Errorf("arc.Seal: chain already has %d sets (RFC 8617 max %d)", len(prior), maxARCSets)
@@ -205,29 +208,19 @@ func (f arcField) header() *dkim.Header {
 }
 
 // priorChain collects the existing ARC sets from a parsed header block into an
-// instance-ordered slice (i=1 first). Sets are keyed by their i= tag; the slice
-// is contiguous when the incoming chain is well-formed, which is the only case
-// where cv resolves to "pass".
-func priorChain(headers []dkim.Header) []*arcSet {
-	sets := map[int]*arcSet{}
+// instance-ordered slice (i=1 first). It shares collectARCSets with Verify, so a
+// chain carrying a duplicate ARC field at any instance is rejected here too
+// (RFC 8617 §5.1.1): such a set is malformed and cannot be deterministically
+// extended, so Seal refuses it rather than sealing over an ambiguous "last wins"
+// choice. The slice is contiguous when the incoming chain is well-formed, which
+// is the only case where cv resolves to "pass".
+func priorChain(headers []dkim.Header) ([]*arcSet, error) {
+	sets, err := collectARCSets(headers)
+	if err != nil {
+		return nil, err
+	}
 	max := 0
-	for idx := range headers {
-		h := &headers[idx]
-		i := arcInstance(h.Value)
-		if i < 1 {
-			continue
-		}
-		if sets[i] == nil {
-			sets[i] = &arcSet{}
-		}
-		switch strings.ToLower(h.Name) {
-		case "arc-authentication-results":
-			sets[i].aar = h
-		case "arc-message-signature":
-			sets[i].ams = h
-		case "arc-seal":
-			sets[i].as = h
-		}
+	for i := range sets {
 		if i > max {
 			max = i
 		}
@@ -238,7 +231,7 @@ func priorChain(headers []dkim.Header) []*arcSet {
 			ordered = append(ordered, s)
 		}
 	}
-	return ordered
+	return ordered, nil
 }
 
 // amsHeaderTag builds the ARC-Message-Signature h= tag: the requested headers
