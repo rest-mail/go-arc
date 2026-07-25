@@ -164,6 +164,20 @@ DKIM verification over the same message.
 Full API reference:
 [pkg.go.dev/github.com/rest-mail/go-arc](https://pkg.go.dev/github.com/rest-mail/go-arc).
 
+## Changelog
+
+Recent releases (see [CHANGELOG.md](CHANGELOG.md) for the full history):
+
+- **v0.2.2** — restore ARC-Message-Signature verification via go-dkim v0.2.1's
+  policy-free primitive (fixing the regression from DKIM's `v=` requirement);
+  RFC 8617 verify/seal fixes: 50-set cap, `cv=fail` seal scope, reject seal `h=`,
+  require seal `s=`/`d=`, instance-from-highest, strict instance/tag parsing.
+- **v0.2.1** — validate the ARC-Seal `cv=` chain, reject repeated ARC fields,
+  ignore an unexpected AMS `v=`; go-dkim v0.1.2.
+- **v0.2.0** — see the [release notes](https://github.com/rest-mail/go-arc/releases/tag/v0.2.0).
+- **v0.1.1** — see the [release notes](https://github.com/rest-mail/go-arc/releases/tag/v0.1.1).
+- **v0.1.0** — initial release: ARC sealing and verification (RFC 8617).
+
 ## License
 
 [MIT](LICENSE) © 2026 rest-mail
