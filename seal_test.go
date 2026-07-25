@@ -292,6 +292,124 @@ func TestSeal_IncompleteIncomingChainRejected(t *testing.T) {
 	}
 }
 
+// TestSeal_CVFailSealScope covers RFC 8617 §5.1.2: the scope of the ARC-Seal
+// signature depends on the chain-validation status this MTA computes.
+//
+//   - cv=fail: the chain being extended is broken, so the new ARC-Seal MUST be
+//     computed over ONLY the ARC set this MTA just created — the prior (failed)
+//     sets MUST NOT be signed. Signing the whole prior chain is what lets a
+//     broken chain be re-sealed as if intact (the "healing" bug of issue #13).
+//   - cv=pass / cv=none: the new ARC-Seal covers every prior ARC set plus the
+//     new one, in instance order (unchanged behavior).
+//
+// The check is byte-exact: it re-runs the verifier's own arcSealBase over two
+// candidate scopes — the new set alone vs the full chain — and asserts which one
+// the produced signature verifies against. Before the fix, a cv=fail seal signed
+// the full prior chain, so the "full chain" scope verified and the "current set
+// only" scope did not — the reverse of what §5.1.2 requires.
+func TestSeal_CVFailSealScope(t *testing.T) {
+	priv, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
+
+	// orderedSets returns the ARC sets of msg in ascending instance order.
+	orderedSets := func(t *testing.T, msg []byte) []*arcSet {
+		t.Helper()
+		headers, _ := dkim.SplitMessage(msg)
+		sets, err := collectARCSets(headers)
+		if err != nil {
+			t.Fatalf("collectARCSets: %v", err)
+		}
+		ordered := make([]*arcSet, 0, len(sets))
+		for i := 1; i <= len(sets); i++ {
+			s := sets[i]
+			if s == nil || s.aar == nil || s.ams == nil || s.as == nil {
+				t.Fatalf("i=%d incomplete set in sealed message", i)
+			}
+			ordered = append(ordered, s)
+		}
+		return ordered
+	}
+
+	t.Run("cv_fail_covers_only_current_set", func(t *testing.T) {
+		// A valid single-set chain, then tamper its signed AAR so the chain the
+		// next hop receives no longer verifies: the new seal must record cv=fail.
+		first := sealChain(t, priv, "example.test", "arc", 1)
+		broken := strings.Replace(first, "spf=pass", "spf=fail", 1)
+		if broken == first {
+			t.Fatal("test setup: failed to tamper the incoming chain")
+		}
+
+		res, err := Seal(context.Background(), []byte(broken), SealOptions{
+			Domain:      "example.test",
+			Selector:    "arc",
+			PrivateKey:  priv,
+			AuthResults: "example.test; arc=fail",
+			Resolver:    resolver,
+			Time:        1784776200,
+		})
+		if err != nil {
+			t.Fatalf("Seal: %v", err)
+		}
+		if res.ChainValidation != "fail" {
+			t.Fatalf("precondition: want cv=fail over broken chain, got %s", res.ChainValidation)
+		}
+
+		ordered := orderedSets(t, res.Message)
+		if len(ordered) != 2 {
+			t.Fatalf("want a 2-set sealed message, got %d sets", len(ordered))
+		}
+		newOnly := ordered[len(ordered)-1:] // just the set this MTA added
+
+		// RFC 8617 §5.1.2: the cv=fail ARC-Seal MUST verify over ONLY the new set.
+		if r, reason := verifyARCSeal(context.Background(), newOnly, resolver); r != dkim.ResultPass {
+			t.Errorf("cv=fail ARC-Seal must cover only the current instance's set, but it does not verify over that set alone: %s (%s)", r, reason)
+		}
+		// ...and it MUST NOT cover the prior (failed) chain.
+		if r, _ := verifyARCSeal(context.Background(), ordered, resolver); r == dkim.ResultPass {
+			t.Errorf("cv=fail ARC-Seal must NOT sign the prior chain, but it verifies over the full chain (RFC 8617 §5.1.2 scope violation, issue #13)")
+		}
+	})
+
+	t.Run("cv_pass_covers_full_chain", func(t *testing.T) {
+		// An intact single-set chain: the second hop records cv=pass and its seal
+		// must cover the whole chain — the behavior this fix must leave unchanged.
+		first := sealChain(t, priv, "example.test", "arc", 1)
+
+		res, err := Seal(context.Background(), []byte(first), SealOptions{
+			Domain:      "example.test",
+			Selector:    "arc",
+			PrivateKey:  priv,
+			AuthResults: "example.test; arc=pass",
+			Resolver:    resolver,
+			Time:        1784776300,
+		})
+		if err != nil {
+			t.Fatalf("Seal: %v", err)
+		}
+		if res.ChainValidation != "pass" {
+			t.Fatalf("precondition: want cv=pass over intact chain, got %s", res.ChainValidation)
+		}
+
+		ordered := orderedSets(t, res.Message)
+		if len(ordered) != 2 {
+			t.Fatalf("want a 2-set sealed message, got %d sets", len(ordered))
+		}
+		newOnly := ordered[len(ordered)-1:]
+
+		// The cv=pass ARC-Seal MUST verify over the full chain...
+		if r, reason := verifyARCSeal(context.Background(), ordered, resolver); r != dkim.ResultPass {
+			t.Errorf("cv=pass ARC-Seal must cover the full chain, but it does not verify over it: %s (%s)", r, reason)
+		}
+		// ...and NOT over the new set alone.
+		if r, _ := verifyARCSeal(context.Background(), newOnly, resolver); r == dkim.ResultPass {
+			t.Errorf("cv=pass ARC-Seal must cover the prior chain, but it verifies over the new set alone (full-chain coverage regressed)")
+		}
+	})
+}
+
 // TestSeal_RequiredOptions rejects missing signing identity.
 func TestSeal_RequiredOptions(t *testing.T) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)

@@ -161,13 +161,23 @@ func Seal(ctx context.Context, rawMessage []byte, opt SealOptions) (*SealResult,
 	}
 	ams := field("ARC-Message-Signature", amsNoB+amsSig)
 
-	// 3. ARC-Seal: signs the relaxed-canonicalized ARC header chain up to and
-	// including this set (RFC 8617 §5.1.1), with its own b= empty and no
-	// trailing CRLF. arcSealBase is the exact builder Verify uses.
+	// 3. ARC-Seal: signs the relaxed-canonicalized ARC header chain, with its own
+	// b= empty and no trailing CRLF. arcSealBase is the exact builder Verify uses.
+	//
+	// The scope of the seal depends on cv (RFC 8617 §5.1.2): a cv=pass or cv=none
+	// seal covers every prior ARC set plus this one, in instance order; but a
+	// cv=fail seal MUST cover ONLY the ARC set this MTA just created — the prior
+	// (failed) sets MUST NOT be signed. Signing the whole prior chain on a failed
+	// chain is what would let a broken chain be re-sealed as if intact, healing it
+	// (issue #13); it also cannot verify, since a cv=fail chain is never continued.
 	asNoB := fmt.Sprintf("i=%d; a=rsa-sha256; d=%s; s=%s; t=%d; cv=%s; b=",
 		instance, opt.Domain, opt.Selector, signTime, cv)
-	chain := append(prior, &arcSet{aar: aar.header(), ams: ams.header(), as: field("ARC-Seal", asNoB).header()})
-	asSig, err := signRSA(opt.PrivateKey, arcSealBase(chain))
+	newSet := &arcSet{aar: aar.header(), ams: ams.header(), as: field("ARC-Seal", asNoB).header()}
+	sealSets := append(prior, newSet)
+	if cv == "fail" {
+		sealSets = []*arcSet{newSet}
+	}
+	asSig, err := signRSA(opt.PrivateKey, arcSealBase(sealSets))
 	if err != nil {
 		return nil, fmt.Errorf("arc.Seal: sign ARC-Seal: %w", err)
 	}
