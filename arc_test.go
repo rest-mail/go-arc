@@ -71,21 +71,32 @@ func mkHeader(name, value string) *dkim.Header {
 // sealChain builds an N-instance ARC-sealed message over base and returns the raw.
 func sealChain(t *testing.T, priv *rsa.PrivateKey, d, s string, n int) string {
 	t.Helper()
+	cvs := make([]string, n)
+	for i := range cvs {
+		cvs[i] = "pass"
+	}
+	cvs[0] = "none"
+	return sealChainCV(t, priv, d, s, cvs)
+}
+
+// sealChainCV builds an ARC-sealed message like sealChain but stamps each set's
+// ARC-Seal with the caller-supplied cv= value (cvs[i-1]). Every seal signature
+// is still cryptographically valid over the bytes it signs — including whatever
+// cv= it carries — so a test can forge a chain whose cv= tags are internally
+// inconsistent (e.g. cv=fail, or cv=pass at i=1) yet cryptographically intact.
+func sealChainCV(t *testing.T, priv *rsa.PrivateKey, d, s string, cvs []string) string {
+	t.Helper()
 	base := arcBaseMessage()
 	msgHeaders, body := dkim.SplitMessage([]byte(base))
 
 	var prepend strings.Builder
 	chain := []*arcSet{}
-	for i := 1; i <= n; i++ {
-		cv := "pass"
-		if i == 1 {
-			cv = "none"
-		}
+	for i := 1; i <= len(cvs); i++ {
 		aar := mkHeader("ARC-Authentication-Results", fmt.Sprintf("i=%d; example.test; spf=pass", i))
 		ams := mkHeader("ARC-Message-Signature", signAMS(t, priv, d, s, i, msgHeaders, body))
 		set := &arcSet{aar: aar, ams: ams}
 		chain = append(chain, set)
-		set.as = mkHeader("ARC-Seal", signAS(t, priv, d, s, i, cv, chain))
+		set.as = mkHeader("ARC-Seal", signAS(t, priv, d, s, i, cvs[i-1], chain))
 
 		// ARC sets are prepended in reverse (highest instance on top).
 		block := set.as.Raw + "\r\n" + set.ams.Raw + "\r\n" + set.aar.Raw + "\r\n"
@@ -182,6 +193,37 @@ func TestVerifyARC_NoChain(t *testing.T) {
 		func(context.Context, string) ([]string, error) { return nil, nil })
 	if cv != "none" {
 		t.Errorf("want none, got %s", cv)
+	}
+}
+
+// TestVerifyARC_InconsistentCV covers RFC 8617 §5.2 steps 2 & 3C: an ARC-Seal's
+// cv= tag must be "none" at i=1 and "pass" at every i>1. A chain whose cv= is
+// inconsistent — even with every signature cryptographically intact — describes
+// a chain the RFC says can never be continued, so it must verify as "fail". A
+// verifier that trusts the asserted cv= would launder a broken chain.
+func TestVerifyARC_InconsistentCV(t *testing.T) {
+	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
+	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
+
+	cases := []struct {
+		name string
+		cvs  []string
+	}{
+		{"i1_says_pass", []string{"pass"}},         // i=1 must be cv=none
+		{"i1_says_fail", []string{"fail"}},         // cv=fail can never be continued
+		{"i1_missing", []string{""}},               // absent cv= is not a valid assertion
+		{"i2_says_none", []string{"none", "none"}}, // i>1 must be cv=pass
+		{"i2_says_fail", []string{"none", "fail"}}, // highest-instance cv=fail => chain fail
+		{"i2_bogus", []string{"none", "bogus"}},    // unknown cv= => chain fail
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := sealChainCV(t, priv, "example.test", "arc", tc.cvs)
+			cv, reason := Verify(context.Background(), []byte(raw), resolver)
+			if cv != "fail" {
+				t.Fatalf("cvs=%v: want fail on inconsistent cv=, got %s (%s)", tc.cvs, cv, reason)
+			}
+		})
 	}
 }
 

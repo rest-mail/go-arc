@@ -157,6 +157,30 @@ func Verify(ctx context.Context, rawMessage []byte, resolver dkim.TXTResolver) (
 		}
 	}
 
+	// Each ARC-Seal's cv= (chain-validation) tag must be internally consistent
+	// (RFC 8617 §5.2 steps 2 & 3C): "none" at i=1 and "pass" at every i>1. A
+	// verifier must not trust an asserted cv=, but a self-inconsistent one is
+	// conclusive on its own — a highest-instance cv=fail means a prior verifier
+	// already declared the chain broken (§5.2 step 2), and cv=fail, a missing
+	// tag, or any other value at any position describes a chain the RFC says can
+	// never be continued (§5.1.3). Treat all of these as chain status "fail",
+	// before the cryptographic checks, so an intact-but-laundered chain cannot
+	// verify as "pass".
+	for _, i := range instances {
+		cv := strings.ToLower(strings.TrimSpace(dkim.ParseTagList(sets[i].as.Value)["cv"]))
+		want := "pass"
+		if i == 1 {
+			want = "none"
+		}
+		if cv != want {
+			shown := cv
+			if shown == "" {
+				shown = "(absent)"
+			}
+			return "fail", fmt.Sprintf("ARC-Seal (i=%d) cv=%s, expected cv=%s", i, shown, want)
+		}
+	}
+
 	// 1. The most recent ARC-Message-Signature must verify over the message.
 	amsRes := dkim.VerifySignature(ctx, *sets[n].ams, headers, body, resolver)
 	if amsRes.Result != dkim.ResultPass {
