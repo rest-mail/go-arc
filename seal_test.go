@@ -244,6 +244,54 @@ func TestSeal_DuplicateIncomingChainRejected(t *testing.T) {
 	}
 }
 
+// TestSeal_IncompleteIncomingChainRejected confirms Seal refuses to extend an
+// incoming chain carrying a structurally incomplete prior ARC set — an instance
+// missing one of its three fields (here an ARC-Authentication-Results with no
+// matching ARC-Message-Signature or ARC-Seal). Such a set is malformed (RFC 8617
+// §5.2 step 3A); before the fix Seal dereferenced the nil field in arcSealBase
+// and panicked (issue #8). It must return an explicit malformed-chain error
+// instead, mirroring the completeness rule Verify already applies, so a forwarder
+// that does not control its inbound chain never crashes on a crafted set.
+func TestSeal_IncompleteIncomingChainRejected(t *testing.T) {
+	priv, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
+
+	// A message carrying only an ARC-Authentication-Results for i=1: the set is
+	// present but has no ARC-Message-Signature and no ARC-Seal.
+	incomplete := "ARC-Authentication-Results: i=1; example.test; spf=pass\r\n" + arcBaseMessage()
+
+	// Recover so the pre-fix nil-pointer panic surfaces as a clear test failure
+	// (proving the bug) rather than crashing the whole test binary.
+	var (
+		res     *SealResult
+		sealErr error
+	)
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("Seal panicked on an incomplete incoming ARC set (issue #8): %v", r)
+			}
+		}()
+		res, sealErr = Seal(context.Background(), []byte(incomplete), SealOptions{
+			Domain:      "example.test",
+			Selector:    "arc",
+			PrivateKey:  priv,
+			AuthResults: "example.test; arc=fail",
+			Resolver:    resolver,
+		})
+	}()
+
+	if sealErr == nil {
+		t.Fatalf("want error sealing over an incomplete incoming ARC set, got nil (res=%+v)", res)
+	}
+	if !strings.Contains(sealErr.Error(), "malformed") {
+		t.Errorf("expected a malformed-chain error, got: %v", sealErr)
+	}
+}
+
 // TestSeal_RequiredOptions rejects missing signing identity.
 func TestSeal_RequiredOptions(t *testing.T) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
