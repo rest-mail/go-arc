@@ -73,7 +73,9 @@
 // verification over the same message. ARC uses rsa-sha256: the ARC-Seal is
 // verified with relaxed header canonicalization, and the ARC-Message-Signature
 // is verified exactly as the DKIM-Signature it mirrors, honoring the
-// canonicalization declared in its own c= tag.
+// canonicalization declared in its own c= tag — except that, per RFC 8617
+// §4.1.2, the AMS is not versioned: any v= tag it carries is not part of it and
+// is ignored rather than checked against the DKIM version rule.
 package arc
 
 import (
@@ -272,7 +274,12 @@ func collectARCSets(headers []dkim.Header) (map[int]*arcSet, error) {
 			if s.ams != nil {
 				return nil, fmt.Errorf("i=%d duplicate ARC-Message-Signature", i)
 			}
-			s.ams = h
+			// RFC 8617 §4.1.2: an ARC-Message-Signature has DKIM-Signature syntax
+			// but the v= tag is not part of it. Strip any (unexpected) v= now, so
+			// that both the AMS signature check and the ARC-Seal chain that covers
+			// the AMS treat it as the versionless signature it is. See
+			// stripAMSVersionTag.
+			s.ams = stripAMSVersionTag(h)
 		case "arc-seal":
 			if s.as != nil {
 				return nil, fmt.Errorf("i=%d duplicate ARC-Seal", i)
@@ -291,4 +298,54 @@ func arcInstance(value string) int {
 		}
 	}
 	return 0
+}
+
+// stripAMSVersionTag returns a copy of an ARC-Message-Signature header with any
+// v= tag removed. RFC 8617 §4.1.2 defines the AMS with DKIM-Signature syntax but
+// without a v= tag: unlike a DKIM-Signature, the AMS is not versioned. A
+// conformant signer emits none, but an errant v= (e.g. v=DKIM1 copied from DKIM
+// code, or added in transit) would otherwise trip the DKIM version rule
+// (RFC 6376 §3.5, which rejects any v= not equal to 1) when the AMS is verified
+// through go-dkim — failing the entire chain over a tag the RFC says is not part
+// of the signature. Removing it here, at the single point Verify and Seal both
+// collect ARC sets, makes an unexpected v= ignored rather than fatal, and keeps
+// the AMS byte-identical to its versionless form for BOTH the AMS signature check
+// AND the ARC-Seal that covers the AMS field. Every other byte is preserved, so a
+// genuinely broken chain (bad body hash, tampered header, forged signature) still
+// fails.
+func stripAMSVersionTag(h *dkim.Header) *dkim.Header {
+	out := *h
+	out.Value = removeVTag(h.Value)
+	out.Raw = removeVTag(h.Raw)
+	return &out
+}
+
+// removeVTag deletes the entire v= tag — its name, value, and trailing
+// delimiter — from a signature field, preserving every other byte. It differs
+// from dkim.RemoveBValue, which blanks only a value while keeping the "b=" shell:
+// the AMS must read as if no v= tag were ever present (RFC 8617 §4.1.2), so the
+// whole tag is dropped. The v= tag is never the final tag of an AMS (b= is), so
+// dropping its delimiter never leaves a dangling trailing ";".
+func removeVTag(field string) string {
+	var b strings.Builder
+	i, n := 0, len(field)
+	for i < n {
+		seg := field[i:]
+		hasDelim := false
+		if j := strings.IndexByte(field[i:], ';'); j >= 0 {
+			seg = field[i : i+j]
+			i += j + 1
+			hasDelim = true
+		} else {
+			i = n
+		}
+		if eq := strings.IndexByte(seg, '='); eq >= 0 && strings.EqualFold(strings.TrimSpace(seg[:eq]), "v") {
+			continue // drop the whole v= tag together with its delimiter
+		}
+		b.WriteString(seg)
+		if hasDelim {
+			b.WriteByte(';')
+		}
+	}
+	return b.String()
 }
