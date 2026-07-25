@@ -161,7 +161,20 @@ func Verify(ctx context.Context, rawMessage []byte, resolver dkim.TXTResolver) (
 	// before the cryptographic checks, so an intact-but-laundered chain cannot
 	// verify as "pass".
 	for _, i := range instances {
-		cv := strings.ToLower(strings.TrimSpace(dkim.ParseTagList(sets[i].as.Value)["cv"]))
+		asTags := dkim.ParseTagList(sets[i].as.Value)
+
+		// RFC 8617 §4.1.3: an ARC-Seal always covers the entire set of ARC header
+		// fields, so — unlike the ARC-Message-Signature — it MUST NOT carry an h=
+		// tag. A seal that includes one is malformed (even a bare "h="), and a
+		// verifier MUST treat the chain as broken. Reject it here, before the
+		// cryptographic checks, so a crafted h= (which arcSealBase does not honour)
+		// cannot ride along on an otherwise-valid seal signature and launder the
+		// chain to "pass".
+		if _, ok := asTags["h"]; ok {
+			return "fail", fmt.Sprintf("ARC-Seal (i=%d) carries a forbidden h= tag (RFC 8617 §4.1.3)", i)
+		}
+
+		cv := strings.ToLower(strings.TrimSpace(asTags["cv"]))
 		want := "pass"
 		if i == 1 {
 			want = "none"

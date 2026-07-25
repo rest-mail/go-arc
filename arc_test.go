@@ -64,8 +64,46 @@ func signAS(t *testing.T, priv *rsa.PrivateKey, d, s string, i int, cv string, c
 	return valueNoB + base64.StdEncoding.EncodeToString(sig)
 }
 
+// signASWithH builds an ARC-Seal value that (incorrectly) carries an h= tag,
+// signing the seal over its own bytes *including* the forbidden tag. The seal
+// signature is therefore cryptographically valid over exactly what is
+// transmitted — the only thing wrong with the chain is the presence of the tag
+// itself (RFC 8617 §4.1.3), which is precisely what the verifier must reject.
+func signASWithH(t *testing.T, priv *rsa.PrivateKey, d, s string, i int, cv, hTag string, chain []*arcSet) string {
+	t.Helper()
+	valueNoB := fmt.Sprintf("i=%d; a=rsa-sha256; d=%s; s=%s; t=1784776000; cv=%s; h=%s; b=", i, d, s, cv, hTag)
+	seal := &dkim.Header{Name: "ARC-Seal", Value: " " + valueNoB, Raw: "ARC-Seal: " + valueNoB}
+	chain[len(chain)-1].as = seal
+	base := arcSealBase(chain)
+	hashed := dkim.HashBytes(crypto.SHA256, []byte(base))
+	sig, err := rsa.SignPKCS1v15(rand.Reader, priv, crypto.SHA256, hashed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return valueNoB + base64.StdEncoding.EncodeToString(sig)
+}
+
 func mkHeader(name, value string) *dkim.Header {
 	return &dkim.Header{Name: name, Value: " " + value, Raw: name + ": " + value}
+}
+
+// sealChainSealH builds a valid single-set ARC message whose ARC-Seal (i=1,
+// cv=none) additionally carries the given h= tag, sealed over its own bytes so
+// every signature is cryptographically intact. The returned message differs from
+// a conformant one only by the forbidden seal h= tag.
+func sealChainSealH(t *testing.T, priv *rsa.PrivateKey, d, s, hTag string) string {
+	t.Helper()
+	base := arcBaseMessage()
+	msgHeaders, body := dkim.SplitMessage([]byte(base))
+
+	aar := mkHeader("ARC-Authentication-Results", "i=1; example.test; spf=pass")
+	ams := mkHeader("ARC-Message-Signature", signAMS(t, priv, d, s, 1, msgHeaders, body))
+	set := &arcSet{aar: aar, ams: ams}
+	chain := []*arcSet{set}
+	set.as = mkHeader("ARC-Seal", signASWithH(t, priv, d, s, 1, "none", hTag, chain))
+
+	block := set.as.Raw + "\r\n" + set.ams.Raw + "\r\n" + set.aar.Raw + "\r\n"
+	return block + base
 }
 
 // sealChain builds an N-instance ARC-sealed message over base and returns the raw.
@@ -238,6 +276,37 @@ func TestVerifyARC_AMSVersionTagStillFailsOnTamper(t *testing.T) {
 	}
 	if !strings.Contains(reason, "ARC-Message-Signature") {
 		t.Errorf("expected an AMS failure reason, got: %s", reason)
+	}
+}
+
+// TestVerifyARC_SealWithHTagRejected covers RFC 8617 §4.1.3: an ARC-Seal always
+// covers the entire set of ARC header fields, so — unlike the
+// ARC-Message-Signature — it MUST NOT carry an h= tag. A seal signed *with* an
+// h= tag is cryptographically intact over its own transmitted bytes (the seal
+// signature verifies), but the tag is forbidden, so a verifier MUST treat the
+// chain as broken (cv=fail). Before the fix, Verify checked only the seal's a=
+// algorithm and signature and ignored the h= tag entirely, so a seal carrying
+// h=from verified as "pass" — a chain-laundering vector. Both a value-bearing
+// h=from and a bare h= must be rejected.
+func TestVerifyARC_SealWithHTagRejected(t *testing.T) {
+	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
+	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
+
+	for _, hTag := range []string{"from", "from:to:subject", ""} {
+		name := "h=" + hTag
+		if hTag == "" {
+			name = "bare_h="
+		}
+		t.Run(name, func(t *testing.T) {
+			raw := sealChainSealH(t, priv, "example.test", "arc", hTag)
+			cv, reason := Verify(context.Background(), []byte(raw), resolver)
+			if cv != "fail" {
+				t.Fatalf("ARC-Seal carrying a forbidden h= tag must fail the chain, got %s (%s)", cv, reason)
+			}
+			if !strings.Contains(reason, "h=") {
+				t.Errorf("expected a forbidden-h= reason, got: %s", reason)
+			}
+		})
 	}
 }
 
