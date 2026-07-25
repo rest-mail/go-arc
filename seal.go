@@ -62,7 +62,8 @@ type SealOptions struct {
 
 // SealResult is the ARC set Seal produced for instance i=N.
 type SealResult struct {
-	// Instance is the ARC instance number (i=) of the new set: prior sets + 1.
+	// Instance is the ARC instance number (i=) of the new set: 1 more than the
+	// highest instance already on the message (RFC 8617 §5.1 step 3).
 	Instance int
 	// ChainValidation is the cv= value recorded in the ARC-Seal — "none" (no
 	// prior chain), "pass", or "fail" (RFC 8617 §5.1.1).
@@ -83,8 +84,8 @@ type SealResult struct {
 // it, sealing the message for the next hop. It is the counterpart to Verify:
 // what Seal produces, Verify accepts.
 //
-// For instance i=N (one past however many ARC sets the message already carries)
-// it builds the three ARC header fields:
+// For instance i=N (one past the highest instance already on the message, per
+// RFC 8617 §5.1 step 3) it builds the three ARC header fields:
 //
 //   - ARC-Authentication-Results (AAR): "i=N; " + opt.AuthResults;
 //   - ARC-Message-Signature (AMS): a DKIM-style rsa-sha256 signature over the
@@ -127,13 +128,21 @@ func Seal(ctx context.Context, rawMessage []byte, opt SealOptions) (*SealResult,
 	}
 
 	headers, body := dkim.SplitMessage(rawMessage)
-	prior, err := priorChain(headers)
+	prior, highest, err := priorChain(headers)
 	if err != nil {
 		return nil, fmt.Errorf("arc.Seal: incoming ARC chain malformed: %w", err)
 	}
-	instance := len(prior) + 1
+	// RFC 8617 §5.1 step 3: the new ARC set's instance number is 1 more than the
+	// HIGHEST instance already on the message — not the count of prior sets. On a
+	// well-formed contiguous chain the two are equal, but a gapped chain (say i=1
+	// and i=3, a 2-set chain) makes count-based derivation emit i=3, colliding with
+	// the existing i=3 and producing a self-invalidating message with two ARC-Seals
+	// at the same instance (issue #12). Deriving from the highest instance never
+	// collides. (A gapped chain is non-contiguous, so Verify reports cv=fail and the
+	// new seal is scoped to this set alone — but the instance must be right first.)
+	instance := highest + 1
 	if instance > maxARCSets {
-		return nil, fmt.Errorf("arc.Seal: chain already has %d sets (RFC 8617 max %d)", len(prior), maxARCSets)
+		return nil, fmt.Errorf("arc.Seal: highest ARC instance is i=%d; a new set would exceed the RFC 8617 maximum of %d", highest, maxARCSets)
 	}
 
 	// cv= records the validation status of the chain we are extending
@@ -218,25 +227,27 @@ func (f arcField) header() *dkim.Header {
 }
 
 // priorChain collects the existing ARC sets from a parsed header block into an
-// instance-ordered slice (i=1 first). It shares collectARCSets with Verify, so a
-// chain carrying a duplicate ARC field at any instance is rejected here too
-// (RFC 8617 §5.1.1): such a set is malformed and cannot be deterministically
-// extended, so Seal refuses it rather than sealing over an ambiguous "last wins"
-// choice. The slice is contiguous when the incoming chain is well-formed, which
-// is the only case where cv resolves to "pass".
-func priorChain(headers []dkim.Header) ([]*arcSet, error) {
+// instance-ordered slice (i=1 first) and reports the highest instance number
+// present. It shares collectARCSets with Verify, so a chain carrying a duplicate
+// ARC field at any instance is rejected here too (RFC 8617 §5.1.1): such a set is
+// malformed and cannot be deterministically extended, so Seal refuses it rather
+// than sealing over an ambiguous "last wins" choice. The slice is contiguous when
+// the incoming chain is well-formed, which is the only case where cv resolves to
+// "pass"; the returned highest instance is what Seal derives the new set's number
+// from (max+1), which — unlike the slice length — does not collide on a gap.
+func priorChain(headers []dkim.Header) ([]*arcSet, int, error) {
 	sets, err := collectARCSets(headers)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	max := 0
+	highest := 0
 	for i := range sets {
-		if i > max {
-			max = i
+		if i > highest {
+			highest = i
 		}
 	}
-	ordered := make([]*arcSet, 0, max)
-	for i := 1; i <= max; i++ {
+	ordered := make([]*arcSet, 0, highest)
+	for i := 1; i <= highest; i++ {
 		s := sets[i]
 		if s == nil {
 			continue
@@ -247,11 +258,11 @@ func priorChain(headers []dkim.Header) ([]*arcSet, error) {
 		// over such a set — arcSealBase dereferences every field — so refuse the
 		// chain with an explicit error here rather than nil-panicking downstream.
 		if s.aar == nil || s.ams == nil || s.as == nil {
-			return nil, fmt.Errorf("i=%d incomplete ARC set", i)
+			return nil, 0, fmt.Errorf("i=%d incomplete ARC set", i)
 		}
 		ordered = append(ordered, s)
 	}
-	return ordered, nil
+	return ordered, highest, nil
 }
 
 // amsHeaderTag builds the ARC-Message-Signature h= tag: the requested headers

@@ -410,6 +410,71 @@ func TestSeal_CVFailSealScope(t *testing.T) {
 	})
 }
 
+// TestSeal_InstanceFromMaxNotCount covers RFC 8617 §5.1 step 3 (issue #12): the
+// new ARC set's instance number is one more than the HIGHEST instance already on
+// the message, not one more than the COUNT of prior sets. The two coincide on a
+// well-formed contiguous chain but diverge on a gapped one — and gapped chains do
+// reach a forwarder, which does not control its inbound chain.
+//
+//   - Gapped {i=1, i=3}: count-based derivation yields i=3, colliding with the
+//     existing i=3 and emitting a message with two ARC-Seals at i=3 that every
+//     verifier rejects. Correct derivation (max present + 1) yields i=4.
+//   - Contiguous {i=1, i=2}: count and max coincide at 2, so the new set is i=3 —
+//     the well-formed case, which must keep working.
+func TestSeal_InstanceFromMaxNotCount(t *testing.T) {
+	priv, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
+
+	t.Run("gapped_1_3_seals_at_4", func(t *testing.T) {
+		raw := gappedChain(t, priv, "example.test", "arc", 1, 3)
+
+		res, err := Seal(context.Background(), []byte(raw), SealOptions{
+			Domain:      "example.test",
+			Selector:    "arc",
+			PrivateKey:  priv,
+			AuthResults: "example.test; arc=fail",
+			Resolver:    resolver,
+			Time:        1784776400,
+		})
+		if err != nil {
+			t.Fatalf("Seal: %v", err)
+		}
+		// The bug: len({i=1, i=3}) + 1 = 3, which collides with the existing i=3.
+		if res.Instance == 3 {
+			t.Fatalf("new ARC set collides with the existing i=3 (issue #12): count-based derivation produced i=3 instead of max+1=4")
+		}
+		if res.Instance != 4 {
+			t.Fatalf("want new instance i=4 (highest present +1), got i=%d", res.Instance)
+		}
+		// The emitted ARC-Seal must actually carry i=4, so no second i=3 seal exists.
+		if got := arcInstance(strings.TrimPrefix(res.AS, "ARC-Seal:")); got != 4 {
+			t.Errorf("emitted ARC-Seal i= tag = %d, want 4", got)
+		}
+	})
+
+	t.Run("contiguous_1_2_seals_at_3", func(t *testing.T) {
+		raw := sealChain(t, priv, "example.test", "arc", 2)
+
+		res, err := Seal(context.Background(), []byte(raw), SealOptions{
+			Domain:      "example.test",
+			Selector:    "arc",
+			PrivateKey:  priv,
+			AuthResults: "example.test; arc=pass",
+			Resolver:    resolver,
+			Time:        1784776500,
+		})
+		if err != nil {
+			t.Fatalf("Seal: %v", err)
+		}
+		if res.Instance != 3 {
+			t.Fatalf("want new instance i=3 over a contiguous {1,2} chain, got i=%d", res.Instance)
+		}
+	})
+}
+
 // TestSeal_RequiredOptions rejects missing signing identity.
 func TestSeal_RequiredOptions(t *testing.T) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
