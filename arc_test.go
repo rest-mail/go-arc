@@ -143,6 +143,36 @@ func sealChainCV(t *testing.T, priv *rsa.PrivateKey, d, s string, cvs []string) 
 	return prepend.String() + base
 }
 
+// gappedChain builds an ARC-sealed message carrying a complete ARC set at each of
+// the given instance numbers, leaving any intervening instance absent. It lets a
+// test construct a non-contiguous chain (e.g. i=1 and i=3, with i=2 missing) whose
+// every set is nonetheless structurally complete — the shape that makes
+// count-based instance derivation collide (issue #12). Each ARC-Seal is signed
+// over its own set alone: the chain is deliberately non-contiguous, so it is not
+// meant to verify as a whole (Seal records cv=fail over it), only to be well-formed
+// enough for Seal to parse and extend without erroring.
+func gappedChain(t *testing.T, priv *rsa.PrivateKey, d, s string, instances ...int) string {
+	t.Helper()
+	base := arcBaseMessage()
+	msgHeaders, body := dkim.SplitMessage([]byte(base))
+
+	var prepend strings.Builder
+	for _, i := range instances {
+		aar := mkHeader("ARC-Authentication-Results", fmt.Sprintf("i=%d; example.test; spf=pass", i))
+		ams := mkHeader("ARC-Message-Signature", signAMS(t, priv, d, s, i, msgHeaders, body))
+		set := &arcSet{aar: aar, ams: ams}
+		cv := "pass"
+		if i == 1 {
+			cv = "none"
+		}
+		set.as = mkHeader("ARC-Seal", signAS(t, priv, d, s, i, cv, []*arcSet{set}))
+
+		block := set.as.Raw + "\r\n" + set.ams.Raw + "\r\n" + set.aar.Raw + "\r\n"
+		prepend.WriteString(block)
+	}
+	return prepend.String() + base
+}
+
 // testKeyResolver returns a dkim.TXTResolver that serves priv's public key at
 // <selector>._domainkey.<domain> and NXDOMAIN for everything else.
 func testKeyResolver(t *testing.T, pubPEM, selector, domain string) dkim.TXTResolver {
