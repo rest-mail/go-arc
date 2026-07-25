@@ -106,6 +106,26 @@ func sealChainSealH(t *testing.T, priv *rsa.PrivateKey, d, s, hTag string) strin
 	return block + base
 }
 
+// signASNoSelector builds an ARC-Seal value exactly like signAS but OMITS the s=
+// (selector) tag. The seal signature is still computed over — and valid for — the
+// s=-less bytes it transmits, so the ONLY defect in the resulting seal is the
+// missing required selector tag; this isolates issue #15 from any signature
+// breakage. Used to prove a seal without s= must not verify by pivoting onto the
+// substituted "default" selector.
+func signASNoSelector(t *testing.T, priv *rsa.PrivateKey, d string, i int, cv string, chain []*arcSet) string {
+	t.Helper()
+	valueNoB := fmt.Sprintf("i=%d; a=rsa-sha256; d=%s; t=1784776000; cv=%s; b=", i, d, cv)
+	seal := &dkim.Header{Name: "ARC-Seal", Value: " " + valueNoB, Raw: "ARC-Seal: " + valueNoB}
+	chain[len(chain)-1].as = seal
+	base := arcSealBase(chain)
+	hashed := dkim.HashBytes(crypto.SHA256, []byte(base))
+	sig, err := rsa.SignPKCS1v15(rand.Reader, priv, crypto.SHA256, hashed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return valueNoB + base64.StdEncoding.EncodeToString(sig)
+}
+
 // sealChain builds an N-instance ARC-sealed message over base and returns the raw.
 func sealChain(t *testing.T, priv *rsa.PrivateKey, d, s string, n int) string {
 	t.Helper()
@@ -376,6 +396,71 @@ func TestVerifyARC_MaxSetsEnforced(t *testing.T) {
 	}
 	if !strings.Contains(reason, "50") {
 		t.Errorf("expected a max-sets reason mentioning the ceiling, got: %s", reason)
+	}
+}
+
+// TestVerifyARC_SealMissingSelectorRejected covers issue #15 / RFC 8617 §4.1.3:
+// the ARC-Seal's s= (selector) is a REQUIRED tag. A seal that omits s= must NOT
+// verify by falling back to the substituted "default" selector — dkim.FetchKey /
+// dkim.RecordName resolve default._domainkey.<d> for an empty selector, so a seal
+// with no s= would otherwise verify against whatever key happens to live there
+// (a verification-integrity hole: an attacker drops s= to pivot onto a selector
+// that resolves). The AMS keeps a valid s= (its own path already requires one).
+//
+// The resolver deliberately serves the same signing key at BOTH arc._domainkey.<d>
+// (for the AMS) AND default._domainkey.<d> (the selector the s=-less seal would
+// resolve to), so every signature in the chain is cryptographically intact and
+// the ONLY thing between this chain and a "pass" is the missing-selector check.
+// A positive control with s= present confirms the check rejects nothing else.
+// Before the fix, Verify returned "pass" for the s=-less seal.
+func TestVerifyARC_SealMissingSelectorRejected(t *testing.T) {
+	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
+	d := "example.test"
+
+	// Serve priv's key at the AMS selector AND at the substituted default selector.
+	txt, err := dkim.RecordValue(publicPEM(t, priv))
+	if err != nil {
+		t.Fatalf("RecordValue: %v", err)
+	}
+	resolver := func(_ context.Context, name string) ([]string, error) {
+		if name == dkim.RecordName("arc", d) || name == dkim.RecordName("", d) {
+			return []string{txt}, nil
+		}
+		return nil, &net.DNSError{Err: "no such host", Name: name, IsNotFound: true}
+	}
+
+	// buildSingleSet builds a one-set ARC message whose seal is produced by sealAS.
+	buildSingleSet := func(sealAS func(chain []*arcSet) string) string {
+		base := arcBaseMessage()
+		msgHeaders, body := dkim.SplitMessage([]byte(base))
+		set := &arcSet{
+			aar: mkHeader("ARC-Authentication-Results", "i=1; example.test; spf=pass"),
+			ams: mkHeader("ARC-Message-Signature", signAMS(t, priv, d, "arc", 1, msgHeaders, body)),
+		}
+		chain := []*arcSet{set}
+		set.as = mkHeader("ARC-Seal", sealAS(chain))
+		return set.as.Raw + "\r\n" + set.ams.Raw + "\r\n" + set.aar.Raw + "\r\n" + base
+	}
+
+	// Positive control: an otherwise-identical seal WITH s= must still pass.
+	withSelector := buildSingleSet(func(chain []*arcSet) string {
+		return signAS(t, priv, d, "arc", 1, "none", chain)
+	})
+	if cv, reason := Verify(context.Background(), []byte(withSelector), resolver); cv != "pass" {
+		t.Fatalf("valid seal with s= must pass, got %s (%s)", cv, reason)
+	}
+
+	// The bug: the same chain with the seal's s= omitted must fail, not pivot onto
+	// default._domainkey.<d>.
+	noSelector := buildSingleSet(func(chain []*arcSet) string {
+		return signASNoSelector(t, priv, d, 1, "none", chain)
+	})
+	cv, reason := Verify(context.Background(), []byte(noSelector), resolver)
+	if cv != "fail" {
+		t.Fatalf("ARC-Seal with no s= must fail (issue #15), got %s (%s)", cv, reason)
+	}
+	if !strings.Contains(reason, "selector") && !strings.Contains(reason, "s=") {
+		t.Errorf("expected a missing-selector reason, got: %s", reason)
 	}
 }
 
