@@ -227,9 +227,19 @@ func priorChain(headers []dkim.Header) ([]*arcSet, error) {
 	}
 	ordered := make([]*arcSet, 0, max)
 	for i := 1; i <= max; i++ {
-		if s := sets[i]; s != nil {
-			ordered = append(ordered, s)
+		s := sets[i]
+		if s == nil {
+			continue
 		}
+		// A prior set present at this instance but missing any of its three
+		// fields is structurally malformed (RFC 8617 §5.2 step 3A), the same
+		// completeness rule Verify enforces. Seal cannot build the ARC-Seal base
+		// over such a set — arcSealBase dereferences every field — so refuse the
+		// chain with an explicit error here rather than nil-panicking downstream.
+		if s.aar == nil || s.ams == nil || s.as == nil {
+			return nil, fmt.Errorf("i=%d incomplete ARC set", i)
+		}
+		ordered = append(ordered, s)
 	}
 	return ordered, nil
 }
