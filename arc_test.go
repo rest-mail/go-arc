@@ -34,7 +34,7 @@ func arcBaseMessage() string {
 
 // signAMS builds an ARC-Message-Signature value (DKIM-style) over msgHeaders+body,
 // signing the default header set (which includes From, per RFC 8617 §5.1.1).
-func signAMS(t *testing.T, priv *rsa.PrivateKey, d, s string, i int, msgHeaders []dkim.Header, body string) string {
+func signAMS(t testing.TB, priv *rsa.PrivateKey, d, s string, i int, msgHeaders []dkim.Header, body string) string {
 	t.Helper()
 	return signAMSH(t, priv, d, s, i, "from:to:subject:date:message-id", msgHeaders, body)
 }
@@ -42,7 +42,7 @@ func signAMS(t *testing.T, priv *rsa.PrivateKey, d, s string, i int, msgHeaders 
 // signAMSH is signAMS with a caller-supplied h= tag list, letting a test build an
 // ARC-Message-Signature that (incorrectly) omits From while remaining
 // cryptographically valid over exactly the headers it names.
-func signAMSH(t *testing.T, priv *rsa.PrivateKey, d, s string, i int, hTag string, msgHeaders []dkim.Header, body string) string {
+func signAMSH(t testing.TB, priv *rsa.PrivateKey, d, s string, i int, hTag string, msgHeaders []dkim.Header, body string) string {
 	t.Helper()
 	bodyHash := dkim.HashBytes(crypto.SHA256, []byte(dkim.CanonicalizeBody(body, "relaxed")))
 	bh := base64.StdEncoding.EncodeToString(bodyHash)
@@ -58,7 +58,7 @@ func signAMSH(t *testing.T, priv *rsa.PrivateKey, d, s string, i int, hTag strin
 }
 
 // signAS builds an ARC-Seal value over the chain (ascending), sealing the last set.
-func signAS(t *testing.T, priv *rsa.PrivateKey, d, s string, i int, cv string, chain []*arcSet) string {
+func signAS(t testing.TB, priv *rsa.PrivateKey, d, s string, i int, cv string, chain []*arcSet) string {
 	t.Helper()
 	valueNoB := fmt.Sprintf("i=%d; a=rsa-sha256; d=%s; s=%s; t=1784776000; cv=%s; b=", i, d, s, cv)
 	seal := &dkim.Header{Name: "ARC-Seal", Value: " " + valueNoB, Raw: "ARC-Seal: " + valueNoB}
@@ -154,7 +154,7 @@ func signASNoSelector(t *testing.T, priv *rsa.PrivateKey, d string, i int, cv st
 }
 
 // sealChain builds an N-instance ARC-sealed message over base and returns the raw.
-func sealChain(t *testing.T, priv *rsa.PrivateKey, d, s string, n int) string {
+func sealChain(t testing.TB, priv *rsa.PrivateKey, d, s string, n int) string {
 	t.Helper()
 	cvs := make([]string, n)
 	for i := range cvs {
@@ -169,7 +169,7 @@ func sealChain(t *testing.T, priv *rsa.PrivateKey, d, s string, n int) string {
 // is still cryptographically valid over the bytes it signs — including whatever
 // cv= it carries — so a test can forge a chain whose cv= tags are internally
 // inconsistent (e.g. cv=fail, or cv=pass at i=1) yet cryptographically intact.
-func sealChainCV(t *testing.T, priv *rsa.PrivateKey, d, s string, cvs []string) string {
+func sealChainCV(t testing.TB, priv *rsa.PrivateKey, d, s string, cvs []string) string {
 	t.Helper()
 	base := arcBaseMessage()
 	msgHeaders, body := dkim.SplitMessage([]byte(base))
@@ -198,7 +198,7 @@ func sealChainCV(t *testing.T, priv *rsa.PrivateKey, d, s string, cvs []string) 
 // over its own set alone: the chain is deliberately non-contiguous, so it is not
 // meant to verify as a whole (Seal records cv=fail over it), only to be well-formed
 // enough for Seal to parse and extend without erroring.
-func gappedChain(t *testing.T, priv *rsa.PrivateKey, d, s string, instances ...int) string {
+func gappedChain(t testing.TB, priv *rsa.PrivateKey, d, s string, instances ...int) string {
 	t.Helper()
 	base := arcBaseMessage()
 	msgHeaders, body := dkim.SplitMessage([]byte(base))
@@ -239,7 +239,7 @@ func testKeyResolver(t *testing.T, pubPEM, selector, domain string) dkim.TXTReso
 
 // publicPEM renders a private key's public half exactly as dkim.GenerateKey does
 // (PKIX SubjectPublicKeyInfo), which is what dkim.RecordValue consumes.
-func publicPEM(t *testing.T, priv *rsa.PrivateKey) string {
+func publicPEM(t testing.TB, priv *rsa.PrivateKey) string {
 	t.Helper()
 	der, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
 	if err != nil {
@@ -250,6 +250,7 @@ func publicPEM(t *testing.T, priv *rsa.PrivateKey) string {
 
 // --- tests ---
 
+// checklist: ARC-HDR-03 ARC-HDR-05 ARC-HDR-12 ARC-VAL-10
 func TestVerifyARC_SingleSetRoundTrip(t *testing.T) {
 	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
 	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
@@ -261,6 +262,7 @@ func TestVerifyARC_SingleSetRoundTrip(t *testing.T) {
 	}
 }
 
+// checklist: ARC-SEAL-05 ARC-VAL-10
 func TestVerifyARC_TwoSetChain(t *testing.T) {
 	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
 	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
@@ -272,6 +274,7 @@ func TestVerifyARC_TwoSetChain(t *testing.T) {
 	}
 }
 
+// checklist: ARC-HDR-03 ARC-VAL-07
 func TestVerifyARC_TamperedBodyFailsAMS(t *testing.T) {
 	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
 	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
@@ -287,6 +290,7 @@ func TestVerifyARC_TamperedBodyFailsAMS(t *testing.T) {
 	}
 }
 
+// checklist: ARC-VAL-09
 func TestVerifyARC_TamperedSealFails(t *testing.T) {
 	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
 	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
@@ -313,6 +317,8 @@ func TestVerifyARC_TamperedSealFails(t *testing.T) {
 // (RFC 6376 §3.5, which rejects v= not equal to 1) must not be applied to the
 // AMS. Before the fix, Verify delegated AMS verification straight to
 // dkim.VerifySignature, whose version rule rejected v=DKIM1 and failed the chain.
+//
+// checklist: ARC-HDR-04
 func TestVerifyARC_AMSVersionTagIgnored(t *testing.T) {
 	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
 	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
@@ -338,6 +344,8 @@ func TestVerifyARC_AMSVersionTagIgnored(t *testing.T) {
 // breakage. A chain whose body is tampered must still fail even when the AMS also
 // carries a v= tag — the AMS signature verification (over every byte but the
 // stripped v=) still runs.
+//
+// checklist: ARC-HDR-04
 func TestVerifyARC_AMSVersionTagStillFailsOnTamper(t *testing.T) {
 	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
 	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
@@ -365,6 +373,8 @@ func TestVerifyARC_AMSVersionTagStillFailsOnTamper(t *testing.T) {
 // algorithm and signature and ignored the h= tag entirely, so a seal carrying
 // h=from verified as "pass" — a chain-laundering vector. Both a value-bearing
 // h=from and a bare h= must be rejected.
+//
+// checklist: ARC-HDR-13
 func TestVerifyARC_SealWithHTagRejected(t *testing.T) {
 	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
 	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
@@ -395,6 +405,8 @@ func TestVerifyARC_SealWithHTagRejected(t *testing.T) {
 // check to dkim.VerifySignatureBare — policy-free by design, so it applied no
 // From-must-be-signed rule — and an AMS with h=to:subject:date verified as
 // "pass". A conformant AMS whose h= includes From (any case) must still pass.
+//
+// checklist: ARC-HDR-11
 func TestVerifyARC_AMSMustSignFrom(t *testing.T) {
 	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
 	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
@@ -426,6 +438,7 @@ func TestVerifyARC_AMSMustSignFrom(t *testing.T) {
 	}
 }
 
+// checklist: ARC-VAL-01
 func TestVerifyARC_NoChain(t *testing.T) {
 	cv, _ := Verify(context.Background(), []byte("From: a@b.test\r\nSubject: x\r\n\r\nbody\r\n"),
 		func(context.Context, string) ([]string, error) { return nil, nil })
@@ -439,6 +452,8 @@ func TestVerifyARC_NoChain(t *testing.T) {
 // inconsistent — even with every signature cryptographically intact — describes
 // a chain the RFC says can never be continued, so it must verify as "fail". A
 // verifier that trusts the asserted cv= would launder a broken chain.
+//
+// checklist: ARC-VAL-03 ARC-VAL-06
 func TestVerifyARC_InconsistentCV(t *testing.T) {
 	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
 	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
@@ -473,6 +488,8 @@ func TestVerifyARC_InconsistentCV(t *testing.T) {
 // ARC-Seal is re-canonicalized over every prior set, O(n²), plus one DNS lookup
 // per set — a denial-of-service vector). Before the fix, Verify had no length
 // guard and returned "pass" for the 51-set chain.
+//
+// checklist: ARC-VAL-02 ARC-VAL-10
 func TestVerifyARC_MaxSetsEnforced(t *testing.T) {
 	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
 	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
@@ -509,6 +526,8 @@ func TestVerifyARC_MaxSetsEnforced(t *testing.T) {
 // the ONLY thing between this chain and a "pass" is the missing-selector check.
 // A positive control with s= present confirms the check rejects nothing else.
 // Before the fix, Verify returned "pass" for the s=-less seal.
+//
+// checklist: ARC-HDR-14
 func TestVerifyARC_SealMissingSelectorRejected(t *testing.T) {
 	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
 	d := "example.test"
@@ -560,6 +579,7 @@ func TestVerifyARC_SealMissingSelectorRejected(t *testing.T) {
 	}
 }
 
+// checklist: ARC-VAL-09
 func TestVerifyARC_WrongKeyFails(t *testing.T) {
 	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
 	other, _ := rsa.GenerateKey(rand.Reader, 1024)
@@ -596,6 +616,8 @@ func duplicateFirstHeader(t *testing.T, raw, name string) string {
 // silently accepts the extra copy (whose bytes are identical here, so every
 // signature still verifies) and reports "pass", a parser-differential an
 // attacker can exploit against verifiers that instead keep the first copy.
+//
+// checklist: ARC-SET-02 ARC-VAL-04
 func TestVerifyARC_DuplicateFieldRejected(t *testing.T) {
 	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
 	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")

@@ -128,6 +128,8 @@ func sealSingleDupAMSTag(t *testing.T, priv *rsa.PrivateKey, d, s string) string
 // plainly carries ARC returned "none" instead of "fail". Each message here has a
 // single ARC set with the given malformed instance and nothing else, so the old
 // path returned "none" (confirmed RED); the fix reports "fail".
+//
+// checklist: ARC-SET-01
 func TestVerifyARC_MalformedInstanceFailsNotNone(t *testing.T) {
 	stub := func(context.Context, string) ([]string, error) { return nil, nil }
 	for _, iLit := range []string{"0", "-3", "99999999999999999999"} {
@@ -147,6 +149,8 @@ func TestVerifyARC_MalformedInstanceFailsNotNone(t *testing.T) {
 // an instance must lie in 1..50. A lone in-range-but-non-contiguous instance was
 // already caught by the contiguity check, but an out-of-range value must be
 // rejected as a malformed instance regardless of position.
+//
+// checklist: ARC-SET-01
 func TestVerifyARC_OutOfRangeInstanceRejected(t *testing.T) {
 	stub := func(context.Context, string) ([]string, error) { return nil, nil }
 	for _, iLit := range []string{"51", "99"} {
@@ -165,6 +169,8 @@ func TestVerifyARC_OutOfRangeInstanceRejected(t *testing.T) {
 // literal bytes such a chain verifies cryptographically, so the old code
 // accepted it ("pass") — a parser-differential, since another verifier might
 // reject or renumber it. It must fail. A canonical i=1 control still passes.
+//
+// checklist: ARC-SET-01
 func TestVerifyARC_ZeroPaddedInstanceRejected(t *testing.T) {
 	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
 	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
@@ -197,6 +203,8 @@ func TestVerifyARC_ZeroPaddedInstanceRejected(t *testing.T) {
 // own duplicated bytes, verified the chain as "pass" — a parser-differential
 // another verifier (first-wins, or reject) would score differently. Confirmed
 // RED (pass) before the fix; fail after.
+//
+// checklist: ARC-HDR-15
 func TestVerifyARC_DuplicateTagRejected(t *testing.T) {
 	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
 	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
@@ -228,6 +236,8 @@ func TestVerifyARC_DuplicateTagRejected(t *testing.T) {
 // a value carrying a bare CR or LF would fold additional header fields into the
 // sealed message. The old code performed no sanitization and produced such a
 // message (RED: no error); the fix rejects the input.
+//
+// checklist: ARC-SEAL-08
 func TestSeal_RejectsCRLFInjection(t *testing.T) {
 	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
 	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
@@ -275,6 +285,8 @@ func TestSeal_RejectsCRLFInjection(t *testing.T) {
 // present, so a caller listing them (or sealing over an existing chain and
 // requesting the prior ARC fields) signed fields that break downstream. The fix
 // drops them from h= even when requested and present.
+//
+// checklist: ARC-HDR-07 ARC-HDR-08
 func TestAMSHeaderTag_ExcludesARCAndAuthResults(t *testing.T) {
 	headers := []dkim.Header{
 		{Name: "From", Value: " a@example.test"},
@@ -303,6 +315,8 @@ func TestAMSHeaderTag_ExcludesARCAndAuthResults(t *testing.T) {
 // second hop sealing over an existing ARC chain, and explicitly requesting the
 // prior ARC fields and Authentication-Results in Headers, must not emit them in
 // the new ARC-Message-Signature's h= tag.
+//
+// checklist: ARC-HDR-07 ARC-HDR-08
 func TestSeal_AMSHeaderTagExcludesInPractice(t *testing.T) {
 	priv, _ := rsa.GenerateKey(rand.Reader, 1024)
 	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")

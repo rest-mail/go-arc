@@ -7,6 +7,8 @@
 Authenticated Received Chain ([RFC 8617](https://www.rfc-editor.org/rfc/rfc8617))
 sealing and verification for Go.
 
+It is checked item by item against the RFC in [CHECKLIST.md](CHECKLIST.md).
+
 ## About
 
 ARC lets a message's authentication assessment survive intermediaries — mailing
@@ -159,6 +161,115 @@ canonicalization and signature primitives exported by go-dkim rather than
 reimplementing them — ARC verification is therefore byte-for-byte consistent with
 DKIM verification over the same message.
 
+## Choices the RFC leaves open
+
+Where RFC 8617 leaves a detail to the implementation, this package takes the
+simplest secure option:
+
+- **Tag-lists are read strictly.** In an ARC-Message-Signature or ARC-Seal, a
+  repeated tag, a tag name outside RFC 6376's ABNF or an empty tag-spec
+  (`;;`) fails the chain, and tag names and values are case-sensitive
+  (`I=1` is not the instance, `a=RSA-SHA256` is no algorithm). The `i=` tag may
+  come anywhere in those two fields, as most sealers write it; in the
+  ARC-Authentication-Results it must come first, as §4.1.1's ABNF says.
+- **The AMS must sign From and must not sign an ARC-Seal or
+  ARC-Message-Signature** (RFC 6376 §5.4, RFC 8617 §4.1.2). An AMS that signs
+  an ARC-Authentication-Results, as sealers written to the drafts did, is
+  tolerated.
+- **Algorithms:** the AMS is verified by go-dkim, so it may be rsa-sha256 or
+  ed25519-sha256; the ARC-Seal must be rsa-sha256. rsa-sha1 fails either
+  (RFC 8301). Seal signs both with rsa-sha256.
+- **`d=` and `s=`** must be DNS names in A-label form (labels of 1 to 63
+  letters, digits, hyphens or underscores, 253 characters at most), as go-dkim
+  requires of a DKIM-Signature. Anything else fails the chain with no DNS
+  query, and Seal refuses to write it. U-labels (§4.1.4) are not converted.
+- **oldest-pass** (§5.2 step 5, optional) is not computed.
+- **Seal stops on a failed chain.** When the most recent ARC-Seal already says
+  `cv=fail`, Seal returns `ErrChainFailed` and adds nothing (§5.1 step 2);
+  relay the message as it is. A chain that is broken but does not say so yet
+  is sealed with `cv=fail`, its seal covering only the new set (§5.1.2).
+- **By default the AMS signs** From, To, Subject, Date, Message-ID and every
+  DKIM-Signature on the message (§4.1.2). Seal signs the message it is given,
+  so call it after every other change, DKIM signing included (§5.1 step 1).
+- **What to do with a failing chain is the receiver's policy**: §5.2 says to
+  treat it like no chain at all.
+
+## Testing
+
+```sh
+go test -race ./...                 # all tests, no network
+go run ./internal/checklist         # CHECKLIST.md and the tests agree
+go test -run='^$' -fuzz='^FuzzVerify$' -fuzztime=30s .
+```
+
+CI also fails below 95% statement coverage; the lines left uncovered on
+purpose are listed, each with a reason, in [COVERAGE.md](COVERAGE.md). The fuzz
+targets are `FuzzFieldInstance` (any ARC header field value: an instance it
+accepts is 1 to 50) and `FuzzVerify` (any message, seeded with valid chains of
+one and two sets and broken ones: the status is `none`, `pass` or `fail`, and
+`none` without an ARC field); CI runs each for 30 seconds. Inputs that once
+failed are kept in `testdata/fuzz`.
+
+The [ValiMail ARC test suite](https://github.com/ValiMail/arc_test_suite)
+(MIT), which OpenARC and dkimpy run, is in
+[`testdata/valimail-arc-test-suite`](testdata/valimail-arc-test-suite) and all
+175 of its validation tests run. It was written against draft 18 of ARC, so
+six expect what RFC 8617, RFC 6376 or RFC 8301 later changed;
+`suiteValidationExceptions` in `suite_test.go` lists them with the reason.
+Chains of 1, 2 and 50 sets pass, 51 fail, and a chain broken at each seal fails
+at that seal. RFC 8617's Appendix B examples carry no keys, so they cannot be
+verified. There is no differential test: [go-msgauth](https://github.com/emersion/go-msgauth)
+(v0.7.0) implements DKIM and DMARC but not ARC.
+
+### The RFC checklist
+
+[CHECKLIST.md](CHECKLIST.md) lists the RFC's requirements item by item, and a
+small program, [`internal/checklist`](internal/checklist/main.go), checks it
+against the tests in CI. It is the same program as
+[go-spf](https://github.com/rest-mail/go-spf)'s,
+[go-dkim](https://github.com/rest-mail/go-dkim)'s and
+[go-dmarc](https://github.com/rest-mail/go-dmarc)'s; other `go-*` libraries
+can copy both.
+
+The checklist is a Markdown file holding one or more tables whose header is
+exactly:
+
+```markdown
+| ID | Section | Level | Requirement | Tests |
+|----|---------|-------|-------------|-------|
+| ARC-HDR-13 | 4.1.3 | MUST | An ARC-Seal carrying an `h=` tag makes the chain fail. | `TestVerifyARC_SealWithHTagRejected` |
+| ARC-VAL-14 | 5.2.2 | MAY | Reject a failing message in SMTP with 5.7.29 or 5.7.26. | n/a: the library speaks no SMTP. |
+```
+
+- **ID** is unique, upper case, and ends in a number: a prefix for the RFC, an
+  area, and a sequence number (`ARC-HDR-13`).
+- **Section** is the RFC section (or sections) the requirement comes from.
+- **Level** is the RFC 2119 keyword it carries (`MUST`, `MUST NOT`, `SHOULD`,
+  `SHOULD NOT`, `RECOMMENDED`, `NOT RECOMMENDED`, `MAY`, ...), or `Normative`
+  for normative text without a keyword.
+- **Requirement** says what is required, in one line (no `|`).
+- **Tests** lists the test functions that cover it, separated by commas, or
+  says `n/a:` and why it does not apply.
+
+Each test names the items it covers in its doc comment:
+
+```go
+// TestSeal_StopsOnFailedChain checks that Seal adds nothing to a message whose
+// most recent ARC-Seal already says cv=fail.
+//
+// checklist: ARC-SEAL-02
+func TestSeal_StopsOnFailedChain(t *testing.T) {
+```
+
+`go run ./internal/checklist [-file CHECKLIST.md] [package dir ...]` scans the
+`_test.go` files of the given package directories (default `.`) and fails when:
+
+- an ID is used twice, or a row is malformed;
+- an item names no test and is not marked `n/a`;
+- an item lists a test that does not exist, or that does not name the item;
+- a test names an item that does not exist, is `n/a`, or does not list it;
+- a `Test` or `Fuzz` function names no item (`Example` functions may).
+
 ## Documentation
 
 Full API reference:
@@ -168,6 +279,11 @@ Full API reference:
 
 Recent releases (see [CHANGELOG.md](CHANGELOG.md) for the full history):
 
+- **Unreleased** — go-dkim v0.3.0 (rsa-sha1 refused, ed25519-sha256 AMS
+  verified); Seal returns `ErrChainFailed` on a chain that already says
+  `cv=fail`, checks `d=`/`s=` and signs DKIM-Signatures; stricter ARC field
+  parsing; an RFC checklist, a 95% coverage gate, fuzzing and the ValiMail
+  test suite.
 - **v0.2.3** — Verify now requires the ARC-Message-Signature to sign From
   (RFC 8617 §5.1.1); an AMS whose `h=` omits From is treated as cv=fail.
 - **v0.2.2** — restore ARC-Message-Signature verification via go-dkim v0.2.1's
