@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -20,6 +21,11 @@ const maxARCSets = 50
 // defaultAMSHeaders are the message headers an ARC-Message-Signature covers when
 // SealOptions.Headers is empty — the same default set go-dkim signs.
 var defaultAMSHeaders = []string{"from", "to", "subject", "date", "message-id"}
+
+// ErrChainFailed is returned by Seal for a message whose most recent ARC-Seal
+// already says cv=fail. RFC 8617 §5.1 step 2 stops the sealer there: a failed
+// chain cannot be continued (§5.1.3), so relay the message without a new set.
+var ErrChainFailed = errors.New("arc.Seal: the most recent ARC-Seal says cv=fail; the chain cannot be continued (RFC 8617 §5.1 step 2)")
 
 // SealOptions configures Seal. Domain, Selector, and PrivateKey are required;
 // every other field falls back to a documented default.
@@ -39,7 +45,8 @@ type SealOptions struct {
 	// dkim=pass header.d=example.com". If empty, "<Domain>; none" is recorded.
 	AuthResults string
 	// Headers lists the message headers the ARC-Message-Signature covers (its h=
-	// tag). Empty means from:to:subject:date:message-id. Only headers actually
+	// tag). Empty means from:to:subject:date:message-id and every
+	// DKIM-Signature on the message (RFC 8617 §4.1.2). Only headers actually
 	// present in the message are signed, matching dkim.Sign.
 	Headers []string
 	// HeaderCanon is the ARC-Message-Signature header canonicalization,
@@ -94,6 +101,9 @@ type SealResult struct {
 //   - ARC-Seal (AS): an rsa-sha256 signature over the relaxed-canonicalized ARC
 //     header chain up to and including this set, carrying cv=.
 //
+// A message whose most recent ARC-Seal already says cv=fail is not sealed:
+// Seal returns ErrChainFailed (RFC 8617 §5.1 step 2).
+//
 // cv= is the chain-validation status of the chain being extended, computed by
 // verifying it: "none" if the message carries no prior ARC sets, otherwise the
 // "pass"/"fail" that Verify returns for the message as received. Computing cv
@@ -117,6 +127,11 @@ func Seal(ctx context.Context, rawMessage []byte, opt SealOptions) (*SealResult,
 	// emit a malformed, attacker-shaped message.
 	if err := rejectHeaderInjection(opt); err != nil {
 		return nil, err
+	}
+	// d= and s= name the key record, so they must be DNS names in A-label form,
+	// the form Verify accepts (RFC 6376 §3.5).
+	if !validDNSName(opt.Domain) || !validDNSName(opt.Selector) {
+		return nil, fmt.Errorf("arc.Seal: domain and selector must be DNS names in A-label form")
 	}
 	headerCanon := opt.HeaderCanon
 	if headerCanon == "" {
@@ -150,6 +165,11 @@ func Seal(ctx context.Context, rawMessage []byte, opt SealOptions) (*SealResult,
 	// at the same instance (issue #12). Deriving from the highest instance never
 	// collides. (A gapped chain is non-contiguous, so Verify reports cv=fail and the
 	// new seal is scoped to this set alone — but the instance must be right first.)
+	// RFC 8617 §5.1 step 2: the last set of prior is the one at the highest
+	// instance; if its seal already says cv=fail, there is nothing to continue.
+	if len(prior) > 0 && dkim.ParseTagList(prior[len(prior)-1].as.Value)["cv"] == "fail" {
+		return nil, ErrChainFailed
+	}
 	instance := highest + 1
 	if instance > maxARCSets {
 		return nil, fmt.Errorf("arc.Seal: highest ARC instance is i=%d; a new set would exceed the RFC 8617 maximum of %d", highest, maxARCSets)
@@ -289,10 +309,11 @@ var amsExcludedHeaders = map[string]bool{
 }
 
 // amsHeaderTag builds the ARC-Message-Signature h= tag: the requested headers (or
-// the default set), lowercased, filtered to those actually present and not in
-// amsExcludedHeaders (RFC 8617 §4.1.2).
+// the default set and every DKIM-Signature), lowercased, filtered to those
+// actually present and not in amsExcludedHeaders (RFC 8617 §4.1.2).
 func amsHeaderTag(headers []dkim.Header, want []string) string {
-	if len(want) == 0 {
+	defaults := len(want) == 0
+	if defaults {
 		want = defaultAMSHeaders
 	}
 	present := map[string]bool{}
@@ -304,6 +325,16 @@ func amsHeaderTag(headers []dkim.Header, want []string) string {
 		n := strings.ToLower(strings.TrimSpace(name))
 		if n != "" && present[n] && !amsExcludedHeaders[n] {
 			signed = append(signed, n)
+		}
+	}
+	if defaults {
+		// RFC 8617 §4.1.2: the AMS SHOULD sign the DKIM-Signature fields already
+		// on the message. A name listed once signs only the last field of that
+		// name (RFC 6376 §5.4.2), so it is listed once per field.
+		for _, h := range headers {
+			if strings.EqualFold(h.Name, "dkim-signature") {
+				signed = append(signed, "dkim-signature")
+			}
 		}
 	}
 	return strings.Join(signed, ":")

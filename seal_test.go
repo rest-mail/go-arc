@@ -42,6 +42,8 @@ func keyResolver(t *testing.T, entries ...keyEntry) dkim.TXTResolver {
 
 // TestSeal_SingleSetRoundTrip seals an unsealed message and verifies the result
 // with go-arc's own verifier: pass, one set, cv=none for the first hop.
+//
+// checklist: ARC-HDR-05 ARC-HDR-12 ARC-SEAL-03 ARC-SEAL-04 ARC-SEAL-09
 func TestSeal_SingleSetRoundTrip(t *testing.T) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -87,6 +89,8 @@ func TestSeal_SingleSetRoundTrip(t *testing.T) {
 
 // TestSeal_TwoHopChain seals with two independent signers, one hop over the
 // other's output, and verifies a 2-set chain: instance 2, cv=pass, intact.
+//
+// checklist: ARC-SEAL-03 ARC-SEAL-04 ARC-SEAL-05
 func TestSeal_TwoHopChain(t *testing.T) {
 	hop1, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -144,6 +148,8 @@ func TestSeal_TwoHopChain(t *testing.T) {
 
 // TestSeal_TamperedBodyFails confirms that mutating the body after sealing
 // breaks the ARC-Message-Signature and Verify fails.
+//
+// checklist: ARC-VAL-07
 func TestSeal_TamperedBodyFails(t *testing.T) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -174,6 +180,8 @@ func TestSeal_TamperedBodyFails(t *testing.T) {
 
 // TestSeal_BrokenIncomingChainRecordsFail confirms cv= reflects the received
 // chain: sealing over a chain whose signed AAR was tampered records cv=fail.
+//
+// checklist: ARC-SEAL-04
 func TestSeal_BrokenIncomingChainRecordsFail(t *testing.T) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -215,6 +223,8 @@ func TestSeal_BrokenIncomingChainRecordsFail(t *testing.T) {
 // incoming chain that carries a duplicate ARC field at some instance (RFC 8617
 // §5.1.1): the set is malformed and cannot be deterministically sealed over, so
 // Seal returns an error rather than picking one copy.
+//
+// checklist: ARC-SET-02
 func TestSeal_DuplicateIncomingChainRejected(t *testing.T) {
 	priv, err := rsa.GenerateKey(rand.Reader, 1024)
 	if err != nil {
@@ -252,6 +262,8 @@ func TestSeal_DuplicateIncomingChainRejected(t *testing.T) {
 // and panicked (issue #8). It must return an explicit malformed-chain error
 // instead, mirroring the completeness rule Verify already applies, so a forwarder
 // that does not control its inbound chain never crashes on a crafted set.
+//
+// checklist: ARC-SET-02
 func TestSeal_IncompleteIncomingChainRejected(t *testing.T) {
 	priv, err := rsa.GenerateKey(rand.Reader, 1024)
 	if err != nil {
@@ -307,6 +319,8 @@ func TestSeal_IncompleteIncomingChainRejected(t *testing.T) {
 // the produced signature verifies against. Before the fix, a cv=fail seal signed
 // the full prior chain, so the "full chain" scope verified and the "current set
 // only" scope did not — the reverse of what §5.1.2 requires.
+//
+// checklist: ARC-SEAL-06
 func TestSeal_CVFailSealScope(t *testing.T) {
 	priv, err := rsa.GenerateKey(rand.Reader, 1024)
 	if err != nil {
@@ -421,6 +435,8 @@ func TestSeal_CVFailSealScope(t *testing.T) {
 //     verifier rejects. Correct derivation (max present + 1) yields i=4.
 //   - Contiguous {i=1, i=2}: count and max coincide at 2, so the new set is i=3 —
 //     the well-formed case, which must keep working.
+//
+// checklist: ARC-SEAL-03 ARC-VAL-05
 func TestSeal_InstanceFromMaxNotCount(t *testing.T) {
 	priv, err := rsa.GenerateKey(rand.Reader, 1024)
 	if err != nil {
@@ -450,7 +466,7 @@ func TestSeal_InstanceFromMaxNotCount(t *testing.T) {
 			t.Fatalf("want new instance i=4 (highest present +1), got i=%d", res.Instance)
 		}
 		// The emitted ARC-Seal must actually carry i=4, so no second i=3 seal exists.
-		got, err := arcInstance(strings.TrimPrefix(res.AS, "ARC-Seal:"))
+		got, err := fieldInstance("arc-seal", strings.TrimPrefix(res.AS, "ARC-Seal:"))
 		if err != nil {
 			t.Fatalf("emitted ARC-Seal has an invalid i=: %v", err)
 		}
@@ -480,6 +496,8 @@ func TestSeal_InstanceFromMaxNotCount(t *testing.T) {
 }
 
 // TestSeal_RequiredOptions rejects missing signing identity.
+//
+// checklist: ARC-SEAL-08
 func TestSeal_RequiredOptions(t *testing.T) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {

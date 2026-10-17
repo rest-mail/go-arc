@@ -3,6 +3,61 @@
 All notable changes to go-arc are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+go-arc now meets the standard of rest-mail/rest-mail-server#374: an RFC 8617
+checklist checked in CI, a 95% coverage gate, fuzzing, and the ValiMail ARC
+test suite. Writing the checklist found the bugs fixed below. The module is
+v0.x and its only user is REST Mail's server, so where compatibility would
+cost anything this is a clean break.
+
+**What the server feels:** it calls only `Verify`, which now fails some chains
+it used to pass (an AMS that signs an ARC-Seal or ARC-Message-Signature, an
+rsa-sha1 or sub-1024-bit AMS, an `a=RSA-SHA256` seal, a misplaced AAR `i=`, a
+malformed tag-list, a `d=` or `s=` that is not a DNS name) and passes AMSes
+signed with ed25519-sha256. It does not call `Seal`.
+
+### Breaking
+
+- **Seal returns `ErrChainFailed`** for a message whose most recent ARC-Seal
+  already says `cv=fail`, and adds nothing (RFC 8617 §5.1 step 2). It used to
+  add another set.
+- **Seal refuses a `Domain` or `Selector` that is not a DNS name** in A-label
+  form, which Verify would have failed.
+
+### Changed
+
+- **go-dkim v0.3.1.** The ARC-Message-Signature is verified by its
+  `VerifySignatureBare`, which now accepts ed25519-sha256 (RFC 8463) and
+  refuses rsa-sha1 and RSA keys under 1024 bits (RFC 8301). The ARC-Seal stays
+  rsa-sha256 only.
+- **By default the AMS signs every DKIM-Signature** on the message, as RFC
+  8617 §4.1.2 recommends.
+- **Seals are verified from the highest instance down** (§5.2 step 6); only
+  which seal a failure names changes.
+
+### Fixed
+
+- **Only folding whitespace counts as whitespace in ARC tag-lists and `h=`**
+  (RFC 6376 §3.2; RFC 5322 §3.2.2): space, tab and CRLF folding. A form feed,
+  vertical tab, NEL or no-break space around a tag name, its `=`, a value or an
+  `h=` entry used to be trimmed away, so `i\f=1` read as `i=1`. go-arc's own
+  parsing is fixed here, and go-dkim v0.3.1 fixes the tag-lists it parses for
+  go-arc. Found by `FuzzFieldInstance` in CI, whose check now allows the
+  whitespace the ABNF does.
+- **An AMS that signs an ARC-Seal or ARC-Message-Signature** fails the chain
+  (§4.1.2). One that signs an ARC-Authentication-Results is still tolerated.
+- **Tag-lists are read strictly** (RFC 6376 §3.2): a tag name outside the
+  ABNF or an empty tag-spec fails the chain, and tag names and values are
+  case-sensitive, so `I=1` is not the instance, `V=` is not removed from an AMS
+  and `a=RSA-SHA256` names no algorithm.
+- **The ARC-Authentication-Results must start with `i=` and a `;`** (§4.1.1);
+  the instance used to be read from anywhere in the field.
+- **The ARC-Seal's `d=` and `s=` must be DNS names**; anything else used to be
+  sent to the resolver.
+- **An ARC-Seal with `a=rsa-sha1`** fails with a reason that says rsa-sha1 is
+  historic.
+
 ## v0.2.3
 
 A single RFC 8617 §5.1.1 hardening fix on the verify path: the
