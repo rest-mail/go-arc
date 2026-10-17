@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"net"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -12,13 +13,15 @@ import (
 )
 
 // FuzzFieldInstance reads any ARC header field value: it never panics, and an
-// instance it accepts is 1 to 50 and appears in the value as written.
+// instance it accepts is 1 to 50 and comes from an i= tag in the value, which
+// may have folding whitespace before its "=" (RFC 6376 §3.2, RFC 8617 §4.1.1).
 //
 // checklist: ARC-HDR-15 ARC-SET-01
 func FuzzFieldInstance(f *testing.F) {
 	for _, seed := range []string{
 		"i=1; example.test; spf=pass", "example.test; i=1", "i=50; a=rsa-sha256; d=x; s=y; cv=pass; b=",
 		"i=01; a=b", "i=1a; a=b", "i=1;; a=b", "I=1; a=b", "a=b; i=2", "i=51", "i=1; i=2", "i=-1", "i=", ";", "",
+		"i =1; a=b", "i\r\n =1; a=b", " i = 1 ; example.test",
 	} {
 		for _, name := range []string{"arc-authentication-results", "arc-message-signature", "arc-seal"} {
 			f.Add(name, seed)
@@ -35,11 +38,15 @@ func FuzzFieldInstance(f *testing.F) {
 		if n < 1 || n > maxInstance {
 			t.Fatalf("instance %d out of range", n)
 		}
-		if !strings.Contains(value, "i=") {
+		if !iTag.MatchString(value) {
 			t.Fatalf("instance %d from a value with no i= tag", n)
 		}
 	})
 }
+
+// iTag matches an i= tag name with the folding whitespace a tag-spec allows
+// before its "=".
+var iTag = regexp.MustCompile("i[ \t\r\n]*=")
 
 // FuzzVerify validates any message, seeded with valid chains of one and two
 // sets and broken ones: it never panics, the status is none, pass or fail,

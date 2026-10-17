@@ -1,7 +1,7 @@
 github.com/emersion/go-msgauth v0.7.0 h1:vj2hMn6KhFtW41kshIBTXvp6KgYSqpA/ZN9Pv4g1INc=
 github.com/emersion/go-msgauth v0.7.0/go.mod h1:mmS9I6HkSovrNgq0HNXTeu8l3sRAAuQ9RMvbM4KU7Ck=
-github.com/rest-mail/go-dkim v0.3.0 h1:pNSMtXCQF2gUmbdmuOdkpVnDzFaA6KgM+QozuvNvesA=
-github.com/rest-mail/go-dkim v0.3.0/go.mod h1:OnDDRqOWGdxnMbD8FXxqQqun0fQABeWVmlTBlAL8Kcw=
+github.com/rest-mail/go-dkim v0.3.1 h1:lVNBGL1OX1Xlwr4tp1x7MY7E0NYQLpUVPliTzJ9OOYs=
+github.com/rest-mail/go-dkim v0.3.1/go.mod h1:OnDDRqOWGdxnMbD8FXxqQqun0fQABeWVmlTBlAL8Kcw=
 golang.org/x/crypto v0.55.0 h1:+KWHjbgOaAQ66dh/YlkZKHlz9ZUlq61AFirAR9ntP8M=
 golang.org/x/crypto v0.55.0/go.mod h1:uq0V9dE/fzQuJtbnL+2EhWOE63vo164FY8xqEnV9xis=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=

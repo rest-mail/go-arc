@@ -27,7 +27,7 @@ signed with ed25519-sha256. It does not call `Seal`.
 
 ### Changed
 
-- **go-dkim v0.3.0.** The ARC-Message-Signature is verified by its
+- **go-dkim v0.3.1.** The ARC-Message-Signature is verified by its
   `VerifySignatureBare`, which now accepts ed25519-sha256 (RFC 8463) and
   refuses rsa-sha1 and RSA keys under 1024 bits (RFC 8301). The ARC-Seal stays
   rsa-sha256 only.
@@ -38,6 +38,13 @@ signed with ed25519-sha256. It does not call `Seal`.
 
 ### Fixed
 
+- **Only folding whitespace counts as whitespace in ARC tag-lists and `h=`**
+  (RFC 6376 §3.2; RFC 5322 §3.2.2): space, tab and CRLF folding. A form feed,
+  vertical tab, NEL or no-break space around a tag name, its `=`, a value or an
+  `h=` entry used to be trimmed away, so `i\f=1` read as `i=1`. go-arc's own
+  parsing is fixed here, and go-dkim v0.3.1 fixes the tag-lists it parses for
+  go-arc. Found by `FuzzFieldInstance` in CI, whose check now allows the
+  whitespace the ABNF does.
 - **An AMS that signs an ARC-Seal or ARC-Message-Signature** fails the chain
   (§4.1.2). One that signs an ARC-Authentication-Results is still tolerated.
 - **Tag-lists are read strictly** (RFC 6376 §3.2): a tag name outside the

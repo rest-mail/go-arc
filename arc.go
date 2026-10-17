@@ -174,7 +174,7 @@ func Verify(ctx context.Context, rawMessage []byte, resolver dkim.TXTResolver) (
 			return "fail", fmt.Sprintf("ARC-Seal (i=%d) carries a forbidden h= tag (RFC 8617 §4.1.3)", i)
 		}
 
-		cv := strings.ToLower(strings.TrimSpace(asTags["cv"]))
+		cv := strings.ToLower(trimFWS(asTags["cv"]))
 		want := "pass"
 		if i == 1 {
 			want = "none"
@@ -338,7 +338,7 @@ func arcSealBase(chain []*arcSet) string {
 // cover the author identity and the chain must not verify.
 func amsSignsFrom(hTag string) bool {
 	for _, name := range strings.Split(hTag, ":") {
-		if strings.EqualFold(strings.TrimSpace(name), "from") {
+		if strings.EqualFold(trimFWS(name), "from") {
 			return true
 		}
 	}
@@ -352,7 +352,7 @@ func amsSignsFrom(hTag string) bool {
 // ValiMail ARC test suite, sign it.
 func amsSignsARC(hTag string) string {
 	for _, name := range strings.Split(hTag, ":") {
-		name = strings.ToLower(strings.TrimSpace(name))
+		name = strings.ToLower(trimFWS(name))
 		if name == "arc-seal" || name == "arc-message-signature" {
 			return name
 		}
@@ -443,12 +443,12 @@ func fieldInstance(name, value string) (int, error) {
 		first, _, ok := strings.Cut(value, ";")
 		tag, raw, isTag := strings.Cut(first, "=")
 		switch {
-		case !isTag || strings.TrimSpace(tag) != "i":
+		case !isTag || trimFWS(tag) != "i":
 			return 0, fmt.Errorf("missing required i= instance tag at the start of the field")
 		case !ok:
 			return 0, fmt.Errorf("no \";\" after the i= instance tag")
 		}
-		return parseInstance(strings.TrimSpace(raw))
+		return parseInstance(trimFWS(raw))
 	}
 	tags, err := strictTagList(value)
 	if err != nil {
@@ -461,6 +461,12 @@ func fieldInstance(name, value string) (int, error) {
 	return parseInstance(raw)
 }
 
+// trimFWS removes the folding whitespace RFC 5322 §3.2.2 allows around a tag,
+// a value or an h= entry (SP, HTAB, CR and LF), and nothing else.
+// strings.TrimSpace would also strip form feeds and Unicode spaces, which the
+// ABNF doesn't allow there.
+func trimFWS(s string) string { return strings.Trim(s, " \t\r\n") }
+
 // strictTagList parses a DKIM tag-list as dkim.ParseTagListStrict does (tag
 // names and values by the RFC 6376 §3.2 ABNF, no repeated tag) and also
 // refuses an empty tag-spec, which the ABNF allows only as the one optional
@@ -472,7 +478,7 @@ func strictTagList(value string) (map[string]string, error) {
 	}
 	segs := strings.Split(value, ";")
 	for _, seg := range segs[:len(segs)-1] {
-		if strings.TrimSpace(seg) == "" {
+		if trimFWS(seg) == "" {
 			return nil, fmt.Errorf("empty tag-spec in tag-list")
 		}
 	}
@@ -584,7 +590,7 @@ func removeVTag(field string) string {
 		} else {
 			i = n
 		}
-		if eq := strings.IndexByte(seg, '='); eq >= 0 && strings.TrimSpace(seg[:eq]) == "v" {
+		if eq := strings.IndexByte(seg, '='); eq >= 0 && trimFWS(seg[:eq]) == "v" {
 			continue // drop the whole v= tag together with its delimiter
 		}
 		b.WriteString(seg)

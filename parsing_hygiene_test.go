@@ -357,3 +357,37 @@ func amsHTag(t *testing.T, amsField string) string {
 	v := strings.TrimPrefix(amsField, "ARC-Message-Signature:")
 	return dkim.ParseTagList(v)["h"]
 }
+
+// TestStrictTagList_OnlyFWSIsWhitespace checks that only the folding whitespace
+// RFC 6376 §3.2 allows (SP, HTAB and CRLF folding) counts as whitespace around
+// a tag, its "=" and an h= entry. A form feed, vertical tab, NEL or no-break
+// space is not whitespace there, so i\f=1 has no i= tag and \ffrom is not From.
+//
+// checklist: ARC-HDR-15
+func TestStrictTagList_OnlyFWSIsWhitespace(t *testing.T) {
+	for _, name := range []string{"arc-authentication-results", "arc-message-signature", "arc-seal"} {
+		for _, ok := range []string{"i=1; a=b", " i = 1 ; a=b", "i\t=\t1; a=b", "i\r\n =1; a=b"} {
+			if n, err := fieldInstance(name, ok); err != nil || n != 1 {
+				t.Errorf("%s %q: got %d, %v; want instance 1", name, ok, n, err)
+			}
+		}
+		for _, ws := range []string{"\f", "\v", "\u0085", " "} {
+			for _, bad := range []string{"i" + ws + "=1; a=b", ws + "i=1; a=b", "i=" + ws + "1; a=b"} {
+				if n, err := fieldInstance(name, bad); err == nil {
+					t.Errorf("%s %q: got instance %d, want an error", name, bad, n)
+				}
+			}
+		}
+	}
+	if !amsSignsFrom("to : \r\n from") {
+		t.Error("an h= entry with folded whitespace before From should count as From")
+	}
+	for _, ws := range []string{"\f", "\v", "\u0085", " "} {
+		if amsSignsFrom("to:" + ws + "from") {
+			t.Errorf("h= entry %q counted as From", ws+"from")
+		}
+		if got := amsSignsARC("from:" + ws + "arc-seal"); got != "" {
+			t.Errorf("h= entry %q counted as %s", ws+"arc-seal", got)
+		}
+	}
+}
