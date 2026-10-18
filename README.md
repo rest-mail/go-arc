@@ -202,13 +202,16 @@ go run ./internal/checklist         # CHECKLIST.md and the tests agree
 go test -run='^$' -fuzz='^FuzzVerify$' -fuzztime=30s .
 ```
 
-CI also fails below 95% statement coverage; the lines left uncovered on
-purpose are listed, each with a reason, in [COVERAGE.md](COVERAGE.md). The fuzz
-targets are `FuzzFieldInstance` (any ARC header field value: an instance it
-accepts is 1 to 50) and `FuzzVerify` (any message, seeded with valid chains of
-one and two sets and broken ones: the status is `none`, `pass` or `fail`, and
-`none` without an ARC field); CI runs each for 30 seconds. Inputs that once
-failed are kept in `testdata/fuzz`.
+CI runs these through the RFC proof shared by every REST Mail library,
+go-spf's
+[`rfc-verification.yml`](https://github.com/rest-mail/go-spf/blob/7d291c08d310b9c62afc287e75a534a39150fafb/.github/workflows/rfc-verification.yml),
+pinned to one commit. It also fails below 95% statement coverage; the lines
+left uncovered on purpose are listed, each with a reason, in
+[COVERAGE.md](COVERAGE.md). The fuzz targets are `FuzzFieldInstance` (any ARC
+header field value: an instance it accepts is 1 to 50) and `FuzzVerify` (any
+message, seeded with valid chains of one and two sets and broken ones: the
+status is `none`, `pass` or `fail`, and `none` without an ARC field); CI runs
+each for 30 seconds. Inputs that once failed are kept in `testdata/fuzz`.
 
 The [ValiMail ARC test suite](https://github.com/ValiMail/arc_test_suite)
 (MIT), which OpenARC and dkimpy run, is in
