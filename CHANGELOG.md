@@ -27,6 +27,9 @@ signed with ed25519-sha256. It does not call `Seal`.
 
 ### Changed
 
+- **README verification badges:** show the enforced ≥95% coverage gate and
+  the checklist's 36/46 mapped requirements. CI checks the labels against the
+  audited workflow pin and the validated checklist, including its `n/a` rows.
 - **go-dkim v0.3.1.** The ARC-Message-Signature is verified by its
   `VerifySignatureBare`, which now accepts ed25519-sha256 (RFC 8463) and
   refuses rsa-sha1 and RSA keys under 1024 bits (RFC 8301). The ARC-Seal stays
