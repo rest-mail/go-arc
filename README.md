@@ -1,6 +1,8 @@
 # go-arc
 
 [![CI](https://github.com/rest-mail/go-arc/actions/workflows/ci.yml/badge.svg)](https://github.com/rest-mail/go-arc/actions/workflows/ci.yml)
+[![Coverage gate: ≥95%](https://img.shields.io/badge/coverage%20gate-%E2%89%A595%25-brightgreen)](COVERAGE.md)
+[![Checklist: 36/46 mapped](https://img.shields.io/badge/checklist-36%2F46%20mapped-blue)](CHECKLIST.md)
 [![Go Reference](https://pkg.go.dev/badge/github.com/rest-mail/go-arc.svg)](https://pkg.go.dev/github.com/rest-mail/go-arc)
 [![Go Report Card](https://goreportcard.com/badge/github.com/rest-mail/go-arc)](https://goreportcard.com/report/github.com/rest-mail/go-arc)
 
@@ -195,6 +197,14 @@ simplest secure option:
   treat it like no chain at all.
 
 ## Testing
+
+The coverage badge shows the enforced minimum; CI's RFC proof log reports the
+measured statement coverage. The checklist badge counts requirements mapped to
+tests, including all 10 documented `n/a` rows in its denominator of 46. These
+counts describe the checked mappings; the CI badge shows whether the proof
+currently passes. Tests validate both badge labels, the checklist counts and
+the audited coverage workflow pin, so changes to those claims need a matching
+README update.
 
 ```sh
 go test -race ./...                 # all tests, no network
