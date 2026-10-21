@@ -21,11 +21,11 @@ in the [README](README.md#the-rfc-checklist).
 | ID | Section | Level | Requirement | Tests |
 |----|---------|-------|-------------|-------|
 | ARC-HDR-01 | 4.1.1 | Normative | An ARC-Authentication-Results field is `i=` and its instance, then `;`, then an Authentication-Results payload; one that does not start that way is malformed and fails the chain. | `TestRFC_MalformedFieldsFail` |
-| ARC-HDR-02 | 4.1.1 | MUST | The AAR holds the combined results of every check the sealing ADMD made. | n/a: the caller decides what it checked and passes the results in `SealOptions.AuthResults`; Seal records them as given. |
+| ARC-HDR-02 | 4.1.1 | MUST | The AAR holds the combined results of every check the sealing ADMD made. The caller decides what it checked and passes the combined results in `SealOptions.AuthResults`; Seal records every one of them after the instance, under the ARC-Seal. | `TestSeal_RecordsCallerAuthResults` |
 | ARC-HDR-03 | 4.1.2 | Normative | The ARC-Message-Signature has the syntax and semantics of a DKIM-Signature, and is verified with RFC 6376 §5's canonicalization, hashing and signature check. | `TestVerifyARC_SingleSetRoundTrip`, `TestVerifyARC_TamperedBodyFailsAMS`, `TestValiMailValidationSuite` |
 | ARC-HDR-04 | 4.1.2 | MUST | A `v=` tag in an AMS is ignored. | `TestVerifyARC_AMSVersionTagIgnored`, `TestVerifyARC_AMSVersionTagStillFailsOnTamper` |
 | ARC-HDR-05 | 4.1.2 | Normative | The AMS `i=` tag is the instance, not DKIM's AUID, so none of DKIM's AUID rules apply to it. | `TestVerifyARC_SingleSetRoundTrip`, `TestSeal_SingleSetRoundTrip` |
-| ARC-HDR-06 | 4.1.2 | SHOULD | A sealer attaches the AMS so that the ADMD's own modifications are signed. | n/a: Seal signs the message it is given; the caller seals after its last change (see ARC-SEAL-01). |
+| ARC-HDR-06 | 4.1.2 | SHOULD | A sealer attaches the AMS so that the ADMD's own modifications are signed. | `TestSeal_SignsChangesMadeBeforeSealing` |
 | ARC-HDR-07 | 4.1.2 | MUST NOT | A sealer does not list Authentication-Results in the AMS `h=` tag. | `TestAMSHeaderTag_ExcludesARCAndAuthResults`, `TestSeal_AMSHeaderTagExcludesInPractice` |
 | ARC-HDR-08 | 4.1.2 | MUST NOT | A sealer does not list ARC-Authentication-Results, ARC-Message-Signature or ARC-Seal in the AMS `h=` tag. | `TestAMSHeaderTag_ExcludesARCAndAuthResults`, `TestSeal_AMSHeaderTagExcludesInPractice` |
 | ARC-HDR-09 | 4.1.2 | MUST NOT | A validator fails a chain whose latest AMS signs an ARC-Seal or ARC-Message-Signature. One that signs an ARC-Authentication-Results, as draft-era sealers did, is tolerated. | `TestValiMailValidationSuite` |
@@ -50,10 +50,10 @@ in the [README](README.md#the-rfc-checklist).
 
 | ID | Section | Level | Requirement | Tests |
 |----|---------|-------|-------------|-------|
-| ARC-SEAL-01 | 5.1 | MUST | Every change to the message, DKIM signing included, is made before sealing. | n/a: the order is the caller's; Seal signs the bytes it is given and the README says to seal last. |
+| ARC-SEAL-01 | 5.1 | MUST | Every change to the message, DKIM signing included, is made before sealing. The order is the caller's: it verifies on arrival, modifies, then seals with the arrival status in `SealOptions.ChainValidation`; the changes are signed and a later change fails the chain. | `TestSeal_SignsChangesMadeBeforeSealing` |
 | ARC-SEAL-02 | 5.1 | Normative | Step 2: when the most recent ARC-Seal already says `cv=fail`, the sealer stops. | `TestSeal_StopsOnFailedChain` |
 | ARC-SEAL-03 | 5.1 | Normative | Step 3: the new instance is one more than the highest on the message, or 1 when there is none. | `TestSeal_InstanceFromMaxNotCount`, `TestSeal_TwoHopChain`, `TestSeal_SingleSetRoundTrip` |
-| ARC-SEAL-04 | 5.1 | Normative | Step 4: the sealer adds an AAR, an AMS and an AS, the AS carrying the chain validation status it found. | `TestSeal_SingleSetRoundTrip`, `TestSeal_TwoHopChain`, `TestSeal_BrokenIncomingChainRecordsFail` |
+| ARC-SEAL-04 | 5.1 | Normative | Step 4: the sealer adds an AAR, an AMS and an AS, the AS carrying the chain validation status it found. | `TestSeal_SingleSetRoundTrip`, `TestSeal_TwoHopChain`, `TestSeal_BrokenIncomingChainRecordsFail`, `TestSeal_ChainValidationMustMatchTheChain` |
 | ARC-SEAL-05 | 5.1.1 | Normative | The AS signs every ARC Set in increasing instance order, the new one included, each as AAR, AMS, AS, with its own `b=` empty. | `TestSeal_TwoHopChain`, `TestVerifyARC_TwoSetChain` |
 | ARC-SEAL-06 | 5.1.2 | MUST | When the chain failed, the AS signs only the ARC Set being added. | `TestSeal_CVFailSealScope` |
 | ARC-SEAL-07 | 4.2.1 | Normative | No ARC Set is added past instance 50. | `TestSeal_RefusesPastMaxInstance` |

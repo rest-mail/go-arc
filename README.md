@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/rest-mail/go-arc/actions/workflows/ci.yml/badge.svg)](https://github.com/rest-mail/go-arc/actions/workflows/ci.yml)
 [![Coverage gate: ≥95%](https://img.shields.io/badge/coverage%20gate-%E2%89%A595%25-brightgreen)](COVERAGE.md)
-[![Checklist: 36/46 mapped](https://img.shields.io/badge/checklist-36%2F46%20mapped-blue)](CHECKLIST.md)
+[![Checklist: 39/46 mapped](https://img.shields.io/badge/checklist-39%2F46%20mapped-blue)](CHECKLIST.md)
 [![Go Reference](https://pkg.go.dev/badge/github.com/rest-mail/go-arc.svg)](https://pkg.go.dev/github.com/rest-mail/go-arc)
 [![Go Report Card](https://goreportcard.com/badge/github.com/rest-mail/go-arc)](https://goreportcard.com/report/github.com/rest-mail/go-arc)
 
@@ -136,6 +136,11 @@ func Seal(ctx context.Context, rawMessage []byte, opt SealOptions) (*SealResult,
 - computes `cv=` by verifying the chain it is extending — `none` with no prior
   chain, else the `pass`/`fail` `Verify` reports (this is the only time `Seal`
   needs the resolver / DNS);
+- or, when the hop changed the message (a mailing list's Subject tag or
+  footer, which breaks the previous hop's signature), records the status the
+  caller found by calling `Verify` on the message as it arrived, passed as
+  `ChainValidation`. RFC 8617 §5.1 has every change made before sealing, so
+  verify on arrival, modify, then seal;
 - builds the three header fields and returns a `*SealResult` whose `Message` is
   `rawMessage` with the new set prepended, ready to relay (the individual `AAR`,
   `AMS`, and `AS` fields and the `Instance` / `ChainValidation` are exposed too).
@@ -200,7 +205,7 @@ simplest secure option:
 
 The coverage badge shows the enforced minimum; CI's RFC proof log reports the
 measured statement coverage. The checklist badge counts requirements mapped to
-tests, including all 10 documented `n/a` rows in its denominator of 46. These
+tests, including all 7 documented `n/a` rows in its denominator of 46. These
 counts describe the checked mappings; the CI badge shows whether the proof
 currently passes. Tests validate both badge labels, the checklist counts and
 the audited coverage workflow pin, so changes to those claims need a matching

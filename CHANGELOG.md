@@ -41,6 +41,16 @@ signed with ed25519-sha256. It does not call `Seal`.
 
 ### Fixed
 
+- **A hop that modifies a message can seal it with the right `cv=`**
+  (RFC 8617 §5.1, §5.1.1). `Seal` computed `cv=` by verifying the bytes it was
+  given, so a mailing list that tagged the Subject or added a footer before
+  sealing, as §5.1 requires, recorded `cv=fail`: its own change had broken the
+  previous hop's ARC-Message-Signature. The new `SealOptions.ChainValidation`
+  takes the status `Verify` gave the message on arrival; a value that cannot
+  describe the message (`none` on a chain, `pass` or `fail` without one, or an
+  undefined value) returns `ErrChainValidation`. Empty keeps computing it from
+  the message, which is right when it is sealed as received. Checklist rows
+  ARC-HDR-02, ARC-HDR-06 and ARC-SEAL-01 now map to tests (39/46).
 - **Only folding whitespace counts as whitespace in ARC tag-lists and `h=`**
   (RFC 6376 §3.2; RFC 5322 §3.2.2): space, tab and CRLF folding. A form feed,
   vertical tab, NEL or no-break space around a tag name, its `=`, a value or an

@@ -27,6 +27,11 @@ var defaultAMSHeaders = []string{"from", "to", "subject", "date", "message-id"}
 // chain cannot be continued (§5.1.3), so relay the message without a new set.
 var ErrChainFailed = errors.New("arc.Seal: the most recent ARC-Seal says cv=fail; the chain cannot be continued (RFC 8617 §5.1 step 2)")
 
+// ErrChainValidation is returned when SealOptions.ChainValidation cannot
+// describe the message: "none" on a message carrying an ARC chain, "pass" or
+// "fail" on one without, or a value RFC 8617 §4.1.3 does not define.
+var ErrChainValidation = errors.New("arc.Seal: ChainValidation does not match the message's ARC chain")
+
 // SealOptions configures Seal. Domain, Selector, and PrivateKey are required;
 // every other field falls back to a documented default.
 type SealOptions struct {
@@ -63,8 +68,19 @@ type SealOptions struct {
 	// Resolver fetches the DNS TXT keys used to validate the existing ARC chain
 	// when computing cv= (see Seal). It matches net.Resolver.LookupTXT; nil uses
 	// the system resolver. It is only consulted when the message already carries
-	// an ARC chain (i.e. this is not instance 1).
+	// an ARC chain (i.e. this is not instance 1) and ChainValidation is empty.
 	Resolver dkim.TXTResolver
+	// ChainValidation is the cv= to record: the chain validation status the
+	// ADMD computed when the message arrived, by calling Verify on the message
+	// as received. RFC 8617 §5.1 has every modification made before sealing,
+	// and a modification (a mailing list's Subject tag or footer, say) breaks
+	// the previous hop's ARC-Message-Signature, so a sealer that changed the
+	// message passes the status it found on arrival here. It must be "none"
+	// for a message with no ARC chain and "pass" or "fail" for one with a
+	// chain; anything else returns ErrChainValidation. Empty means Seal
+	// computes it by verifying rawMessage, which is right only when the
+	// message is sealed as it arrived.
+	ChainValidation string
 }
 
 // SealResult is the ARC set Seal produced for instance i=N.
@@ -104,11 +120,13 @@ type SealResult struct {
 // A message whose most recent ARC-Seal already says cv=fail is not sealed:
 // Seal returns ErrChainFailed (RFC 8617 §5.1 step 2).
 //
-// cv= is the chain-validation status of the chain being extended, computed by
-// verifying it: "none" if the message carries no prior ARC sets, otherwise the
-// "pass"/"fail" that Verify returns for the message as received. Computing cv
-// for i>1 fetches the prior signers' keys via opt.Resolver (nil → system DNS);
-// i=1 needs no lookup.
+// cv= is the chain-validation status of the chain being extended. A caller
+// that modified the message after it arrived passes the status Verify gave
+// the message as received in opt.ChainValidation. Otherwise Seal computes it
+// by verifying rawMessage: "none" if the message carries no prior ARC sets,
+// otherwise the "pass"/"fail" that Verify returns. Computing cv for i>1
+// fetches the prior signers' keys via opt.Resolver (nil → system DNS); i=1
+// needs no lookup.
 //
 // The AMS and AS share go-dkim's canonicalization and signing primitives (and
 // the very ARC-Seal base builder Verify uses), so a freshly sealed message
@@ -176,9 +194,17 @@ func Seal(ctx context.Context, rawMessage []byte, opt SealOptions) (*SealResult,
 	}
 
 	// cv= records the validation status of the chain we are extending
-	// (RFC 8617 §5.1.1): none with no prior chain, else pass/fail from verifying
-	// the message exactly as Verify does.
-	cv, _ := Verify(ctx, rawMessage, opt.Resolver)
+	// (RFC 8617 §5.1.1): the status the caller found on arrival when it gives
+	// one, else none with no prior chain and pass/fail from verifying the
+	// message exactly as Verify does.
+	cv := opt.ChainValidation
+	switch {
+	case cv == "":
+		cv, _ = Verify(ctx, rawMessage, opt.Resolver)
+	case cv == "none" && len(prior) == 0, (cv == "pass" || cv == "fail") && len(prior) > 0:
+	default:
+		return nil, fmt.Errorf("%w: cv=%q with %d ARC sets", ErrChainValidation, cv, len(prior))
+	}
 
 	// 1. ARC-Authentication-Results.
 	authResults := opt.AuthResults
