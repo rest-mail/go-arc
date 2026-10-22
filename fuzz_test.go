@@ -22,6 +22,7 @@ func FuzzFieldInstance(f *testing.F) {
 		"i=1; example.test; spf=pass", "example.test; i=1", "i=50; a=rsa-sha256; d=x; s=y; cv=pass; b=",
 		"i=01; a=b", "i=1a; a=b", "i=1;; a=b", "I=1; a=b", "a=b; i=2", "i=51", "i=1; i=2", "i=-1", "i=", ";", "",
 		"i =1; a=b", "i\r\n =1; a=b", " i = 1 ; example.test",
+		"i=1 (hop); example.test", "(c) i (c)=(c (n)) 1 (c);", `i=1 (\)) ;`, "i=1 (open;",
 	} {
 		for _, name := range []string{"arc-authentication-results", "arc-message-signature", "arc-seal"} {
 			f.Add(name, seed)
@@ -37,6 +38,14 @@ func FuzzFieldInstance(f *testing.F) {
 		}
 		if n < 1 || n > maxInstance {
 			t.Fatalf("instance %d out of range", n)
+		}
+		if name == "arc-authentication-results" {
+			// The AAR instance may have comments around its parts, so its
+			// value need not match iTag; it must still start with i.
+			if rest, _ := skipCFWS(value); !strings.HasPrefix(rest, "i") {
+				t.Fatalf("instance %d from a value not starting with i", n)
+			}
+			return
 		}
 		if !iTag.MatchString(value) {
 			t.Fatalf("instance %d from a value with no i= tag", n)
