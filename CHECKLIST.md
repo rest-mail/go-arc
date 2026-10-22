@@ -16,6 +16,28 @@ or the library speaks no SMTP, say) says "n/a" and why. CI checks this file
 against the tests with `go run ./internal/checklist`; the format is described
 in the [README](README.md#the-rfc-checklist).
 
+## Audit record (2026-10-22)
+
+Read RFC 8617 section by section against this checklist and the implementation.
+Every explicit MUST, MUST NOT and SHOULD in RFC 8617 was already represented;
+this pass adds missing normative rules, permitted behaviour and host duties.
+It does not claim a fresh clause-by-clause audit of the imported RFCs. As with
+ARC-HDR-16, an unsupported rule is explicitly marked `n/a` with the limitation;
+it is a conformance gap, not evidence that the RFC makes the rule optional.
+
+| Sections audited | Result |
+|------------------|--------|
+| 1, 2.1–2.4, 3.1–3.8 | Introduction and definitions; added the §3.4 distinction between an authenticated assessment and its syntax/accuracy (ARC-HDR-18). |
+| 3.9, 4.1, 4.1.1–4.1.4 | Rechecked every explicit keyword against ARC-HDR-01–17. Added independent signing identities, UTF-8 payload/message proof and explicit instance-grammar limitations (ARC-HDR-19–23). U-label identities remain ARC-HDR-16. |
+| 4.2, 4.2.1, 4.3, 4.4 | Set membership, numbering, ordered chain and statuses remain ARC-SET-01–03 and ARC-VAL-01–06/10. No new keyword requirement. |
+| 5, 5.1, 5.1.1–5.1.5 | Sealing order/scope remain ARC-SEAL-01–09; added a public-API no-restart proof for §5.1.3 (ARC-SEAL-10). The permission to seal unchanged mail (§5.1.4) and its safety (§5.1.5) are exercised by the existing single/two-hop round trips. Local-policy permission is ARC-POLICY-01. |
+| 5.2, 5.2.1, 5.2.2 | Rechecked every step and keyword against ARC-VAL-01–16. Added proof that a failed older AMS does not fail the chain and that validation stops without unnecessary DNS (ARC-VAL-17–18). Oldest-pass remains deliberately unimplemented, pending owner decision (ARC-VAL-08). |
+| 6 | Existing result/property SHOULDs remain ARC-VAL-11 and ARC-RES-01; added the `arc` method-name host duty (ARC-RES-02). |
+| 7, 7.1, 7.1.1–7.1.3, 7.2, 7.2.1–7.2.2 | Use cases and local-policy/reporting permissions are host duties (ARC-POLICY-01–02). |
+| 8, 9, 9.1–9.5 | Privacy/security discussion adds no explicit MUST/SHOULD. Content scanning, sealer reputation, DNS caching and replay policy belong to the host; a passing chain authenticates assertions, not message safety. |
+| 10, 10.1–10.4 | Registry definitions correspond to existing header names, statuses, SMTP codes and result properties; the method name is now explicit in ARC-RES-02. No additional implementation keyword. |
+| 11, 11.1–11.3, 11.3.1–11.3.4, 12, Appendices A–B | Experiment evaluation, references, design criteria and examples; no additional protocol MUST/SHOULD. No evaluation/reputation or reporting service is implemented here. |
+
 ## ARC header fields (§4.1, §4.2)
 
 | ID | Section | Level | Requirement | Tests |
@@ -37,6 +59,12 @@ in the [README](README.md#the-rfc-checklist).
 | ARC-HDR-15 | RFC 6376 §3.2 | Normative | AMS and AS tag-lists are read strictly: a repeated tag, a tag name outside the ABNF or an empty tag-spec makes the field malformed. Tag names are case-sensitive. Only SP, HTAB and CRLF folding count as whitespace (FWS), there and in `h=`. | `TestVerifyARC_DuplicateTagRejected`, `TestRFC_MalformedFieldsFail`, `FuzzFieldInstance`, `TestStrictTagList_OnlyFWSIsWhitespace` |
 | ARC-HDR-16 | 4.1.4 | Normative | The `d=` and `s=` tags of ARC header fields may hold U-labels. | n/a: like go-dkim for the DKIM-Signature, go-arc accepts A-labels only, and a U-label `d=` or `s=` fails the chain. Converting needs IDNA tables the library does not carry; no sealer seen in practice writes U-labels. |
 | ARC-HDR-17 | RFC 6376 §3.5 | Normative | The ARC-Seal's `d=` and `s=` are DNS names; anything else is not sent to the resolver and fails the chain. | `TestRFC_MalformedFieldsFail` |
+| ARC-HDR-18 | 3.4 | Normative | The accuracy and syntax of the encapsulated authres-payload do not affect chain validity; an intact seal authenticates even a negative or syntactically invalid assessment, but a changed payload fails. | `TestRFC_AARPayloadIsOpaque` |
+| ARC-HDR-19 | 4.1.2 | Normative | ARC imposes no selector/domain alignment requirement on an AMS: its signing identity can differ from the AS, AAR authserv-id and message author, and its own published key must verify it. | `TestRFC_IndependentSigningIdentities` |
+| ARC-HDR-20 | 4.1.3 | Normative | ARC imposes no selector/domain alignment requirement on an AS: its key identity can differ from the corresponding AMS and author, and its own published key must verify it. | `TestRFC_IndependentSigningIdentities` |
+| ARC-HDR-21 | 4.1.4 | Normative | The AAR permits UTF-8 where Authentication-Results does; EAI message headers and payload text are preserved and signed without requiring DKIM quoted-printable encoding. This does not cover U-label key identities (ARC-HDR-16). | `TestRFC_UTF8AssessmentAndMessage` |
+| ARC-HDR-22 | 4.1.2, 4.1.3 | Normative | The AMS and AS ABNF puts the instance before the rest of the tag-list. | n/a: not enforced for AMS/AS; `fieldInstance` deliberately accepts an instance anywhere in their tag-lists for sealer interoperability. This is a grammar tolerance, not strict ABNF conformance; AAR's first-instance rule is enforced (ARC-HDR-01). |
+| ARC-HDR-23 | 3.9, 4.1.1–4.1.3 | Normative | The instance grammar allows CFWS, including RFC 5322 comments, around its name, equals sign and value. | n/a: not supported yet; instance parsing trims folding whitespace only, and the shared DKIM tag-list parser does not implement comment-bearing ARC instance syntax. Comment support needs coordinated parsing of the instance prefix and signature tags; ordinary FWS is supported. |
 
 ## ARC Sets (§4.2)
 
@@ -59,6 +87,7 @@ in the [README](README.md#the-rfc-checklist).
 | ARC-SEAL-07 | 4.2.1 | Normative | No ARC Set is added past instance 50. | `TestSeal_RefusesPastMaxInstance` |
 | ARC-SEAL-08 | RFC 6376 §3.5 | Normative | The fields Seal writes are well formed: `d=` and `s=` are DNS names, and no input carries a CR or LF into a header field. | `TestSeal_RejectsCRLFInjection`, `TestSeal_RejectsInvalidDomainOrSelector`, `TestSeal_RequiredOptions` |
 | ARC-SEAL-09 | RFC 8301 §3.1 | MUST | Signers use rsa-sha256, never rsa-sha1. | `TestSeal_SingleSetRoundTrip` |
+| ARC-SEAL-10 | 5.1.3 | Normative | A broken chain cannot be restarted or continued: when the latest seal declares failure, Seal refuses to add another set even if the caller overrides the arrival status, and preserves the input. | `TestRFC_FailedChainCannotRestart` |
 
 ## Validator (§5.2, §6)
 
@@ -80,4 +109,14 @@ in the [README](README.md#the-rfc-checklist).
 | ARC-VAL-14 | 5.2.2 | MAY | Reject a failing message in SMTP with 5.7.29 or 5.7.26. | n/a: the library speaks no SMTP. |
 | ARC-VAL-15 | RFC 8301 §3.1 | MUST | rsa-sha1 signatures are not verified, in the AMS or the AS. | `TestRFC_MalformedFieldsFail` |
 | ARC-VAL-16 | RFC 6376 §3.2 | Normative | Tag values are case-sensitive: an ARC-Seal with `a=RSA-SHA256` names no algorithm the validator knows. | `TestRFC_MalformedFieldsFail` |
+| ARC-VAL-17 | 5.2 step 5A | Normative | A failed older AMS does not affect chain validity when the latest AMS and all seals verify; historical AMS keys need not be fetched when oldest-pass is not computed. | `TestRFC_OlderAMSFailureDoesNotFailChain` |
+| ARC-VAL-18 | 5.2 steps 1–4, 6 | Normative | Validation stops on absence or failure: structural/cv failures make no DNS queries, a failed latest AMS prevents seal lookups, and a failed latest seal prevents older seal lookups. | `TestRFC_ValidationStopsBeforeUnneededDNS` |
 | ARC-RES-01 | 6 | SHOULD | Record `smtp.remote-ip` and `header.oldest-pass` with the `arc` result. | n/a: the caller writes Authentication-Results, and oldest-pass is not computed (ARC-VAL-08). |
+| ARC-RES-02 | 6, 10.1 | Normative | Communicate chain-validation status in Authentication-Results and AAR using the authentication method name `arc` and result `none`, `pass` or `fail`. | n/a: the caller formats Authentication-Results and supplies the AAR payload; Verify exposes the three statuses but does not format a result header or insert a method into the caller's assessment. |
+
+## Host policy and reporting (§5, §7)
+
+| ID | Section | Level | Requirement | Tests |
+|----|---------|-------|-------------|-------|
+| ARC-POLICY-01 | 5, 7.2.1 | MAY | A handler may use a validated chain's authentication assessments in local disposition decisions, including DMARC overrides. | n/a: the library verifies and seals; the receiver owns trust, DMARC evaluation and message disposition. A passing chain is not a trust or safety verdict. |
+| ARC-POLICY-02 | 7.2.2 | MAY | A DMARC report may describe an ARC-influenced local-policy decision using reason `local_policy`; the comment includes at least the chain status, every AS domain/selector, and the originating IP from the first set. | n/a: this package creates no DMARC reports and has no SMTP connection metadata; the reporting host must obtain and format those data. |
