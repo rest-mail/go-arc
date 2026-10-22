@@ -3,8 +3,10 @@ package arc
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"slices"
@@ -322,4 +324,95 @@ func TestRFC_AARInstanceCFWS(t *testing.T) {
 			t.Errorf("%q: got %s (%s), want fail naming %q", tc.new, cv, reason, tc.reason)
 		}
 	}
+}
+
+// TestRFC_AMSASInstanceCFWS proves the leading instance of an
+// ARC-Message-Signature and an ARC-Seal reads CFWS, including nested comments
+// with quoted-pairs, around its name, equals sign and value (RFC 8617 §3.9,
+// §4.1.2, §4.1.3), and that the rest of the field is still the strict tag-list.
+//
+// checklist: ARC-HDR-24
+func TestRFC_AMSASInstanceCFWS(t *testing.T) {
+	for _, name := range []string{"arc-message-signature", "arc-seal"} {
+		for _, value := range []string{
+			"i=1; a=rsa-sha256",
+			"i=1 (first hop); a=rsa-sha256",
+			"(hop) i=1; a=rsa-sha256",
+			"i (tag) = (value) 1 (end) ; a=rsa-sha256",
+			"i=(a (nested) comment)1; a=rsa-sha256",
+			`i=1 (quoted \) and \( parens); a=rsa-sha256`,
+			"i=1 (has; a semicolon); a=rsa-sha256",
+			"\r\n (folded\r\n comment)\r\n i=1; a=rsa-sha256",
+			"a=rsa-sha256; i=1",
+		} {
+			if n, err := fieldInstance(name, value); err != nil || n != 1 {
+				t.Errorf("%s %q: got %d, %v; want instance 1", name, value, n, err)
+			}
+		}
+		for _, value := range []string{
+			"(hop) i=1; a=rsa-sha256; i=1",
+			"(hop) i=1;; a=rsa-sha256",
+			"(hop) i=1; (c) a=rsa-sha256",
+			"(hop) i=1; a=rsa-sha256; a=rsa-sha256",
+			"(hop) i=0; a=rsa-sha256",
+			"(hop) i=01; a=rsa-sha256",
+			"(unclosed i=1; a=rsa-sha256",
+			"i=1 (c) x; a=rsa-sha256",
+			"a=rsa-sha256; i=1 (c)",
+		} {
+			if n, err := fieldInstance(name, value); err == nil {
+				t.Errorf("%s %q: got instance %d, want an error", name, value, n)
+			}
+		}
+	}
+
+	// In whole chains signed over the commented bytes: every comment position
+	// verifies in the ARC-Seal. The AMS signature is checked by go-dkim, whose
+	// RFC 6376 §3.2 tag-list has no comments, so a comment after the equals
+	// sign or the value verifies but one before the name or the equals sign
+	// fails the chain at the AMS.
+	priv, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
+	for _, tc := range []struct{ ams, as, want, reason string }{
+		{"i=1", "(hop) i (x)= (y) 1 (z)", "pass", ""},
+		{"i= (x) 1 (y)", "\r\n (folded\r\n comment)\r\n i=1", "pass", ""},
+		{"i=1", `i=(a (nested \) ) comment)1`, "pass", ""},
+		{"(hop) i=1", "i=1", "fail", "ARC-Message-Signature"},
+		{"i (x)=1", "i=1", "fail", "ARC-Message-Signature"},
+	} {
+		raw := sealSingleInstanceText(t, priv, "example.test", "arc", tc.ams, tc.as)
+		cv, reason := Verify(context.Background(), []byte(raw), resolver)
+		if cv != tc.want || !strings.Contains(reason, tc.reason) {
+			t.Errorf("AMS %q, AS %q: got %s (%s), want %s naming %q", tc.ams, tc.as, cv, reason, tc.want, tc.reason)
+		}
+	}
+}
+
+// sealSingleInstanceText builds a single-set ARC message whose AMS and AS
+// start with the given instance text, signing every signature over exactly
+// those bytes.
+func sealSingleInstanceText(t *testing.T, priv *rsa.PrivateKey, d, s, amsInstance, asInstance string) string {
+	t.Helper()
+	base := arcBaseMessage()
+	msgHeaders, body := dkim.SplitMessage([]byte(base))
+
+	bh := base64.StdEncoding.EncodeToString(dkim.HashBytes(crypto.SHA256, []byte(dkim.CanonicalizeBody(body, "relaxed"))))
+	hTag := "from:to:subject:date:message-id"
+	amsNoB := fmt.Sprintf("%s; a=rsa-sha256; c=relaxed/relaxed; d=%s; s=%s; h=%s; bh=%s; b=", amsInstance, d, s, hTag, bh)
+	amsHdr := dkim.Header{Name: "ARC-Message-Signature", Value: " " + amsNoB, Raw: "ARC-Message-Signature: " + amsNoB}
+	amsSig := signBase64(t, priv, dkim.BuildSignedHeaders(hTag, msgHeaders, amsHdr, "relaxed"))
+	ams := mkHeader("ARC-Message-Signature", amsNoB+amsSig)
+	aar := mkHeader("ARC-Authentication-Results", "i=1; example.test; spf=pass")
+
+	set := &arcSet{aar: aar, ams: ams}
+	chain := []*arcSet{set}
+	asNoB := fmt.Sprintf("%s; a=rsa-sha256; d=%s; s=%s; t=1784776000; cv=none; b=", asInstance, d, s)
+	set.as = mkHeader("ARC-Seal", asNoB)
+	asSig := signBase64(t, priv, arcSealBase(chain))
+	set.as = mkHeader("ARC-Seal", asNoB+asSig)
+
+	return set.as.Raw + "\r\n" + set.ams.Raw + "\r\n" + set.aar.Raw + "\r\n" + base
 }

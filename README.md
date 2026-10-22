@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/rest-mail/go-arc/actions/workflows/ci.yml/badge.svg)](https://github.com/rest-mail/go-arc/actions/workflows/ci.yml)
 [![Coverage gate: ≥95%](https://img.shields.io/badge/coverage%20gate-%E2%89%A595%25-brightgreen)](COVERAGE.md)
-[![Checklist: 47/59 mapped](https://img.shields.io/badge/checklist-47%2F59%20mapped-blue)](CHECKLIST.md)
+[![Checklist: 48/60 mapped](https://img.shields.io/badge/checklist-48%2F60%20mapped-blue)](CHECKLIST.md)
 [![Go Reference](https://pkg.go.dev/badge/github.com/rest-mail/go-arc.svg)](https://pkg.go.dev/github.com/rest-mail/go-arc)
 [![Go Report Card](https://goreportcard.com/badge/github.com/rest-mail/go-arc)](https://goreportcard.com/report/github.com/rest-mail/go-arc)
 
@@ -178,7 +178,11 @@ simplest secure option:
   (`;;`) fails the chain, and tag names and values are case-sensitive
   (`I=1` is not the instance, `a=RSA-SHA256` is no algorithm). The `i=` tag may
   come anywhere in those two fields, as most sealers write it; in the
-  ARC-Authentication-Results it must come first, as §4.1.1's ABNF says.
+  ARC-Authentication-Results it must come first, as §4.1.1's ABNF says. An
+  instance that comes first may carry RFC 5322 comments, as §3.9 allows:
+  `(hop) i=1;` is instance 1 in any of the three fields. The AMS signature is
+  checked by go-dkim, whose tag-list has no comments, so an AMS verifies only
+  with comments after its `=`.
 - **The AMS must sign From and must not sign an ARC-Seal or
   ARC-Message-Signature** (RFC 6376 §5.4, RFC 8617 §4.1.2). An AMS that signs
   an ARC-Authentication-Results, as sealers written to the drafts did, is
@@ -205,7 +209,7 @@ simplest secure option:
 
 The coverage badge shows the enforced minimum; CI's RFC proof log reports the
 measured statement coverage. The checklist badge counts requirements mapped to
-tests, including all 12 documented `n/a` rows in its denominator of 59. These
+tests, including all 12 documented `n/a` rows in its denominator of 60. These
 counts describe the checked mappings; the CI badge shows whether the proof
 currently passes. Tests validate both badge labels, the checklist counts and
 the audited coverage workflow pin, so changes to those claims need a matching
