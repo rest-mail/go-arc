@@ -263,3 +263,63 @@ func TestRFC_ValidationStopsBeforeUnneededDNS(t *testing.T) {
 		})
 	}
 }
+
+// TestRFC_AARInstanceCFWS reads the AAR instance through the CFWS RFC 8617
+// §3.9 and §4.1.1 allow around its name, "=", value and the ";" after it:
+// folding whitespace and RFC 5322 comments, nested or holding quoted-pairs.
+// An unclosed comment, or anything other than CFWS between the parts, is
+// still malformed.
+//
+// checklist: ARC-HDR-23
+func TestRFC_AARInstanceCFWS(t *testing.T) {
+	for _, value := range []string{
+		"i=1 (first hop); example.test; spf=pass",
+		"(hop) i=1; example.test",
+		"i (tag) = (value) 1 (end) ; example.test",
+		"i=(a (nested) comment)1; example.test",
+		`i=1 (quoted \) and \( parens); example.test`,
+		"i=1 (has; a semicolon); example.test",
+		"\r\n (folded\r\n comment)\r\n i=1; example.test",
+	} {
+		if n, err := fieldInstance("arc-authentication-results", value); err != nil || n != 1 {
+			t.Errorf("%q: got %d, %v; want instance 1", value, n, err)
+		}
+	}
+	for _, value := range []string{
+		"i=1 (unclosed; example.test",
+		"(unclosed i=1; example.test",
+		`i=1 (escaped close\); example.test`,
+		"i=1 x; example.test",
+		"i=1 (c) x; example.test",
+		"i (c) x=1; example.test",
+		"isp.example; i=1",
+		"i=(c); example.test",
+		"i=0 (c); example.test",
+		"i=1 (c)",
+	} {
+		if n, err := fieldInstance("arc-authentication-results", value); err == nil {
+			t.Errorf("%q: got instance %d, want an error", value, n)
+		}
+	}
+
+	// In a whole chain, a commented instance gets past the AAR grammar check:
+	// the chain then fails only because the seal no longer covers the field.
+	priv, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver := testKeyResolver(t, publicPEM(t, priv), "arc", "example.test")
+	raw := sealChain(t, priv, "example.test", "arc", 1)
+	for _, tc := range []struct{ new, reason string }{
+		{"ARC-Authentication-Results: i=1 (first hop);", "ARC-Seal"},
+		{"ARC-Authentication-Results: i=1 (first hop;", "unclosed comment"},
+	} {
+		changed := strings.Replace(raw, "ARC-Authentication-Results: i=1;", tc.new, 1)
+		if changed == raw {
+			t.Fatal("fixture has no AAR to change")
+		}
+		if cv, reason := Verify(context.Background(), []byte(changed), resolver); cv != "fail" || !strings.Contains(reason, tc.reason) {
+			t.Errorf("%q: got %s (%s), want fail naming %q", tc.new, cv, reason, tc.reason)
+		}
+	}
+}

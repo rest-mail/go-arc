@@ -435,20 +435,12 @@ func isARCField(name string) bool {
 // fields many sealers write.
 //
 // The ARC-Authentication-Results is not a tag-list: RFC 8617 §4.1.1 defines it
-// as arc-info = instance [CFWS] ";" authres-payload, so the i= tag comes first
-// and a ";" follows it. The payload's syntax does not affect the chain
+// as arc-info = instance [CFWS] ";" authres-payload, so the i= tag comes first,
+// with comments allowed around its parts, and a ";" follows it. The payload's syntax does not affect the chain
 // (§3.4), so it is not parsed; its methods legally repeat.
 func fieldInstance(name, value string) (int, error) {
 	if name == "arc-authentication-results" {
-		first, _, ok := strings.Cut(value, ";")
-		tag, raw, isTag := strings.Cut(first, "=")
-		switch {
-		case !isTag || trimFWS(tag) != "i":
-			return 0, fmt.Errorf("missing required i= instance tag at the start of the field")
-		case !ok:
-			return 0, fmt.Errorf("no \";\" after the i= instance tag")
-		}
-		return parseInstance(trimFWS(raw))
+		return aarInstance(value)
 	}
 	tags, err := strictTagList(value)
 	if err != nil {
@@ -459,6 +451,80 @@ func fieldInstance(name, value string) (int, error) {
 		return 0, fmt.Errorf("missing required i= instance tag")
 	}
 	return parseInstance(raw)
+}
+
+// aarInstance reads the instance at the start of an ARC-Authentication-Results
+// value by RFC 8617 §4.1.1 and §3.9:
+//
+//	arc-info = instance [CFWS] ";" authres-payload
+//	instance = [CFWS] %s"i" [CFWS] "=" [CFWS] position
+//
+// CFWS is RFC 5322 §3.2.2 folding whitespace and comments, which may nest and
+// hold quoted-pairs, so "i=1 (first hop);" and "(x) i (y)= 1;" are the
+// instance 1.
+func aarInstance(value string) (int, error) {
+	missing := fmt.Errorf("missing required i= instance tag at the start of the field")
+	rest, err := skipCFWS(value)
+	if err != nil {
+		return 0, err
+	}
+	if !strings.HasPrefix(rest, "i") {
+		return 0, missing
+	}
+	if rest, err = skipCFWS(rest[1:]); err != nil {
+		return 0, err
+	}
+	if !strings.HasPrefix(rest, "=") {
+		return 0, missing
+	}
+	if rest, err = skipCFWS(rest[1:]); err != nil {
+		return 0, err
+	}
+	end := 0
+	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
+		end++
+	}
+	digits := rest[:end]
+	if rest, err = skipCFWS(rest[end:]); err != nil {
+		return 0, err
+	}
+	if !strings.HasPrefix(rest, ";") {
+		if rest != "" {
+			return 0, fmt.Errorf("malformed i= instance %q (want a 1..%d decimal with no sign or leading zero)", digits+rest, maxInstance)
+		}
+		return 0, fmt.Errorf("no \";\" after the i= instance tag")
+	}
+	return parseInstance(digits)
+}
+
+// skipCFWS returns s without its leading CFWS (RFC 5322 §3.2.2): folding
+// whitespace and comments, which nest and may hold quoted-pairs. A comment
+// that is not closed is an error.
+func skipCFWS(s string) (string, error) {
+	for {
+		s = strings.TrimLeft(s, " \t\r\n")
+		if !strings.HasPrefix(s, "(") {
+			return s, nil
+		}
+		depth, i := 0, 0
+		for ; i < len(s); i++ {
+			switch s[i] {
+			case '\\':
+				i++ // quoted-pair: the next character is literal
+			case '(':
+				depth++
+			case ')':
+				depth--
+			}
+			if depth == 0 {
+				break
+			}
+		}
+		if depth != 0 {
+			return "", fmt.Errorf("unclosed comment before the i= instance")
+		}
+		s = s[i+1:]
+	}
 }
 
 // trimFWS removes the folding whitespace RFC 5322 §3.2.2 allows around a tag,
