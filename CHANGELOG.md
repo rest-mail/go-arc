@@ -27,6 +27,13 @@ signed with ed25519-sha256. It does not call `Seal`.
 
 ### Changed
 
+- **RFC 8617 section-by-section audit:** adds 12 checklist rows and six focused
+  tests for opaque assessments, independent AMS/AS identities, literal UTF-8,
+  invalid historical AMSes, failed-chain restart refusal and early DNS stops.
+  The audit records the remaining instance grammar tolerances, comment parsing
+  gap and caller-owned result/reporting duties. Oldest-pass remains deferred.
+  The README checklist badge now reports 46/58 mapped requirements.
+
 - **README verification badges:** show the enforced ≥95% coverage gate and
   the checklist's 36/46 mapped requirements. CI checks the labels against the
   audited workflow pin and the validated checklist, including its `n/a` rows.
