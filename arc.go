@@ -431,8 +431,12 @@ func isARCField(name string) bool {
 // ABNF, a repeated tag, or an empty tag-spec (";;") makes the field malformed,
 // rather than taking one reading of it that another verifier might not share.
 // Tag names are case-sensitive, so the instance is the i= tag; I= is an
-// unknown tag. The i= tag may appear anywhere in the list, as it does in the
-// fields many sealers write.
+// unknown tag. Their ABNF puts the instance first, as instance [CFWS] ";"
+// tag-list (§4.1.2, §4.1.3), and a leading instance may carry CFWS comments
+// like the AAR's (§3.9): "(hop) i (x)= 1 (y);" is the instance 1, and the rest
+// of the field is read as the strict tag-list, with no second i=. The i= tag
+// may also appear anywhere else in the list, as it does in the fields many
+// sealers write; there it is an ordinary tag-spec, with no comments.
 //
 // The ARC-Authentication-Results is not a tag-list: RFC 8617 §4.1.1 defines it
 // as arc-info = instance [CFWS] ";" authres-payload, so the i= tag comes first,
@@ -441,6 +445,16 @@ func isARCField(name string) bool {
 func fieldInstance(name, value string) (int, error) {
 	if name == "arc-authentication-results" {
 		return aarInstance(value)
+	}
+	if digits, rest, err := leadingInstance(value); err == nil {
+		tags, err := strictTagList(rest)
+		if err != nil {
+			return 0, err
+		}
+		if _, ok := tags["i"]; ok {
+			return 0, fmt.Errorf("repeated i= instance tag")
+		}
+		return parseInstance(digits)
 	}
 	tags, err := strictTagList(value)
 	if err != nil {
@@ -463,38 +477,49 @@ func fieldInstance(name, value string) (int, error) {
 // hold quoted-pairs, so "i=1 (first hop);" and "(x) i (y)= 1;" are the
 // instance 1.
 func aarInstance(value string) (int, error) {
-	missing := fmt.Errorf("missing required i= instance tag at the start of the field")
-	rest, err := skipCFWS(value)
+	digits, _, err := leadingInstance(value)
 	if err != nil {
 		return 0, err
 	}
+	return parseInstance(digits)
+}
+
+// leadingInstance reads the RFC 8617 §3.9 instance at the start of an ARC
+// header field value, up to and including the [CFWS] ";" after it. It returns
+// the instance digits, still to be checked by parseInstance, and the rest of
+// the value after the ";".
+func leadingInstance(value string) (digits, rest string, err error) {
+	missing := fmt.Errorf("missing required i= instance tag at the start of the field")
+	if rest, err = skipCFWS(value); err != nil {
+		return "", "", err
+	}
 	if !strings.HasPrefix(rest, "i") {
-		return 0, missing
+		return "", "", missing
 	}
 	if rest, err = skipCFWS(rest[1:]); err != nil {
-		return 0, err
+		return "", "", err
 	}
 	if !strings.HasPrefix(rest, "=") {
-		return 0, missing
+		return "", "", missing
 	}
 	if rest, err = skipCFWS(rest[1:]); err != nil {
-		return 0, err
+		return "", "", err
 	}
 	end := 0
 	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
 		end++
 	}
-	digits := rest[:end]
+	digits = rest[:end]
 	if rest, err = skipCFWS(rest[end:]); err != nil {
-		return 0, err
+		return "", "", err
 	}
 	if !strings.HasPrefix(rest, ";") {
 		if rest != "" {
-			return 0, fmt.Errorf("malformed i= instance %q (want a 1..%d decimal with no sign or leading zero)", digits+rest, maxInstance)
+			return "", "", fmt.Errorf("malformed i= instance %q (want a 1..%d decimal with no sign or leading zero)", digits+rest, maxInstance)
 		}
-		return 0, fmt.Errorf("no \";\" after the i= instance tag")
+		return "", "", fmt.Errorf("no \";\" after the i= instance tag")
 	}
-	return parseInstance(digits)
+	return digits, rest[1:], nil
 }
 
 // skipCFWS returns s without its leading CFWS (RFC 5322 §3.2.2): folding

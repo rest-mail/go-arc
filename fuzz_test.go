@@ -14,7 +14,8 @@ import (
 
 // FuzzFieldInstance reads any ARC header field value: it never panics, and an
 // instance it accepts is 1 to 50 and comes from an i= tag in the value, which
-// may have folding whitespace before its "=" (RFC 6376 §3.2, RFC 8617 §4.1.1).
+// may have CFWS around a leading instance's parts (RFC 8617 §3.9) or folding
+// whitespace before a non-leading tag's "=" (RFC 6376 §3.2).
 //
 // checklist: ARC-HDR-15 ARC-SET-01
 func FuzzFieldInstance(f *testing.F) {
@@ -23,6 +24,7 @@ func FuzzFieldInstance(f *testing.F) {
 		"i=01; a=b", "i=1a; a=b", "i=1;; a=b", "I=1; a=b", "a=b; i=2", "i=51", "i=1; i=2", "i=-1", "i=", ";", "",
 		"i =1; a=b", "i\r\n =1; a=b", " i = 1 ; example.test",
 		"i=1 (hop); example.test", "(c) i (c)=(c (n)) 1 (c);", `i=1 (\)) ;`, "i=1 (open;",
+		"i (nested (comment)) = 1; a=b", `i (escaped \)) = 1; a=b`, "i (folded\r\n comment) = 1; a=b",
 	} {
 		for _, name := range []string{"arc-authentication-results", "arc-message-signature", "arc-seal"} {
 			f.Add(name, seed)
@@ -39,15 +41,16 @@ func FuzzFieldInstance(f *testing.F) {
 		if n < 1 || n > maxInstance {
 			t.Fatalf("instance %d out of range", n)
 		}
-		if name == "arc-authentication-results" {
-			// The AAR instance may have comments around its parts, so its
-			// value need not match iTag; it must still start with i.
-			if rest, _ := skipCFWS(value); !strings.HasPrefix(rest, "i") {
-				t.Fatalf("instance %d from a value not starting with i", n)
+		// Every ARC field permits comments before a leading i and its =.
+		// Check those tokens without assuming the value matches iTag.
+		rest, _ := skipCFWS(value)
+		if strings.HasPrefix(rest, "i") {
+			if rest, _ = skipCFWS(rest[1:]); strings.HasPrefix(rest, "=") {
+				return
 			}
-			return
 		}
-		if !iTag.MatchString(value) {
+		// Only AMS/AS permit a non-leading instance, as a strict tag-spec.
+		if name == "arc-authentication-results" || !iTag.MatchString(value) {
 			t.Fatalf("instance %d from a value with no i= tag", n)
 		}
 	})

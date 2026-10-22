@@ -30,9 +30,13 @@ signed with ed25519-sha256. It does not call `Seal`.
 - **The AAR instance reads comments** (RFC 8617 §3.9, §4.1.1): CFWS around
   `i`, `=`, the instance and the `;` after it may hold nested RFC 5322
   comments, so `i=1 (first hop);` is instance 1 instead of a malformed field
-  that fails the chain. An unclosed comment is still malformed. AMS and AS
-  instances still allow folding whitespace only (ARC-HDR-24). The README
-  checklist badge now reports 47/59 mapped requirements.
+  that fails the chain. An unclosed comment is still malformed.
+- **A leading AMS or AS instance reads comments too** (RFC 8617 §3.9, §4.1.2,
+  §4.1.3): `(hop) i (x)= 1 (y);` at the start of an ARC-Seal is instance 1, and
+  the rest of the field is still the strict tag-list, with no second `i=`. An
+  AMS verifies with comments after its `=` but fails with one before `i` or
+  `=`, which go-dkim's tag-list refuses (ARC-HDR-25). The README checklist
+  badge now reports 48/60 mapped requirements.
 
 - **RFC 8617 section-by-section audit:** adds 12 checklist rows and six focused
   tests for opaque assessments, independent AMS/AS identities, literal UTF-8,
