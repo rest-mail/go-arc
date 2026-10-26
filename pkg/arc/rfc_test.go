@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rest-mail/go-dkim"
+	"github.com/rest-mail/go-dkim/pkg/dkim"
 )
 
 // TestRFC_MalformedFieldsFail breaks one field of a valid single-set chain at

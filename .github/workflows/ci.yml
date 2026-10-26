@@ -15,7 +15,7 @@ jobs:
   # fuzz target for 30 seconds. Pinned to one reviewed commit of go-spf.
   rfc:
     name: Verify RFC
-    uses: rest-mail/go-spf/.github/workflows/rfc-verification.yml@7d291c08d310b9c62afc287e75a534a39150fafb
+    uses: rest-mail/go-spf/.github/workflows/rfc-verification.yml@2409e76ef1e501e0222e6c25a0c7a6202de1051b
     with:
       packages: '["./..."]'
       checklist-dirs: '["./pkg/arc", "./pkg/arc/internal/grammar", "./pkg/arc/rfctest"]'

@@ -4,13 +4,9 @@ CI fails when statement coverage of `./...` falls below 95%. These are the
 statements left uncovered on purpose, each with the reason. Add an entry here
 whenever you leave a statement uncovered.
 
-CI's shared RFC proof measures each package with its own tests, without
-`-coverpkg`. The ValiMail suite in `pkg/arc/rfctest` drives `arc.Verify` from
-outside the package, so the statements only it reaches count as uncovered in
-`pkg/arc`: an AMS whose `h=` signs an ARC-Seal, and an ARC-Seal with no `d=`,
-a `b=` that is not base64 or a key that cannot be fetched (`verifyARCSeal` and
-`amsSignsARC` in `pkg/arc/arc.go`). They are tested, and measured with
-`go test -coverpkg=./... ./...` they are covered.
+CI's shared RFC proof measures coverage with `-coverpkg` across every package
+it tests, so the ValiMail suite in `pkg/arc/rfctest`, which drives `arc.Verify`
+from outside the package, counts toward `pkg/arc`.
 
 | File | Function | Statements | Reason |
 |------|----------|------------|--------|

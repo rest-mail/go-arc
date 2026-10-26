@@ -338,7 +338,7 @@ statement coverage. Coverage exceptions, each with its reason, are in
 [COVERAGE.md](COVERAGE.md).
 
 CI runs the RFC proof shared by every REST Mail library, go-spf's
-[`rfc-verification.yml`](https://github.com/rest-mail/go-spf/blob/7d291c08d310b9c62afc287e75a534a39150fafb/.github/workflows/rfc-verification.yml),
+[`rfc-verification.yml`](https://github.com/rest-mail/go-spf/blob/2409e76ef1e501e0222e6c25a0c7a6202de1051b/.github/workflows/rfc-verification.yml),
 pinned to one commit: build, vet, golangci-lint, the race tests with the 95%
 coverage gate, the checklist, and each fuzz target for 30 seconds.
 `TestReadmeCoverageBadge` fails when the pin changes, so the gate is
@@ -377,7 +377,9 @@ Recent releases; see [CHANGELOG.md](CHANGELOG.md) for the complete history.
 ### v0.4.0 (2026-10-26)
 
 The library moves to `pkg/arc` (breaking: change the import path; the
-changelog has a migration table). `Verify` and `Seal` behave as in v0.3.1.
+changelog has a migration table), and it requires go-dkim v0.5.0
+(`pkg/dkim`). The ARC-Message-Signature check picks up go-dkim's `l=` and
+empty-tag fixes.
 
 ### v0.3.1 (2026-10-23)
 

@@ -22,7 +22,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Before
   - `pkg/arc/rfctest` runs the ValiMail ARC test suite against the public
     API. It holds tests only.
 
-No exported name changes, and `Verify` and `Seal` behave exactly as in v0.3.1.
+- go-arc now requires go-dkim v0.5.0, imported as
+  `github.com/rest-mail/go-dkim/pkg/dkim`; before, it required v0.3.1. Go
+  builds a program with one go-dkim version, so a program that also imports
+  go-dkim's old root package must move to `pkg/dkim` as well.
+
+No exported name changes. `Verify` and `Seal` behave as in v0.3.1, except that
+the ARC-Message-Signature check picks up go-dkim's fixes since v0.3.1: an `l=`
+longer than the body is a permerror, and an empty optional tag no longer takes
+its absent-tag default.
 
 Migration: change the import path. The package is still named `arc`, so
 calls such as `arc.Verify` compile unchanged.
@@ -31,6 +39,12 @@ calls such as `arc.Verify` compile unchanged.
 |---------------|--------------|
 | `import "github.com/rest-mail/go-arc"` or `import arc "github.com/rest-mail/go-arc"` | `import "github.com/rest-mail/go-arc/pkg/arc"` |
 | `arc.Verify`, `arc.Seal`, `arc.SealOptions`, `arc.SealResult`, `arc.ErrChainFailed`, `arc.ErrChainValidation` | unchanged, now from `.../pkg/arc` |
+
+### Changed
+
+- CI's shared RFC proof is pinned to the go-spf workflow revision that
+  measures coverage with `-coverpkg`, so the ValiMail suite in
+  `pkg/arc/rfctest` counts toward `pkg/arc`.
 
 ## [0.3.1] - 2026-10-23
 

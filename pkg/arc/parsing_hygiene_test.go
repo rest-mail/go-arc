@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/rest-mail/go-arc/pkg/arc/internal/grammar"
-	"github.com/rest-mail/go-dkim"
+	"github.com/rest-mail/go-dkim/pkg/dkim"
 )
 
 // --- helpers for issue #17 (parsing + output hygiene) ---
