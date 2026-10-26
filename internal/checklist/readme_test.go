@@ -49,7 +49,7 @@ func TestReadmeCoverageBadge(t *testing.T) {
 	// This immutable producer's coverage_total rejects totals outside 95..100.
 	// It has no configurable coverage threshold. Re-audit the gate when changing
 	// the pin, then update this contract and the badge together if necessary.
-	const auditedProducer = "rest-mail/go-spf/.github/workflows/rfc-verification.yml@7d291c08d310b9c62afc287e75a534a39150fafb"
+	const auditedProducer = "rest-mail/go-spf/.github/workflows/rfc-verification.yml@2409e76ef1e501e0222e6c25a0c7a6202de1051b"
 	var workflow struct {
 		Jobs map[string]struct {
 			Uses string `yaml:"uses"`

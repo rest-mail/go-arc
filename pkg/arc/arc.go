@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/rest-mail/go-arc/pkg/arc/internal/grammar"
-	"github.com/rest-mail/go-dkim"
+	"github.com/rest-mail/go-dkim/pkg/dkim"
 )
 
 // arcSet is one ARC header set at a given instance: ARC-Authentication-Results,
@@ -30,7 +30,7 @@ type arcSet struct {
 // system DNS resolver.
 //
 // Header/body canonicalization is shared with dkim.Verify (via the primitives
-// exported by github.com/rest-mail/go-dkim), so ARC verification is consistent with
+// exported by github.com/rest-mail/go-dkim/pkg/dkim), so ARC verification is consistent with
 // DKIM verification and with any RFC 8617 verifier operating on the same bytes.
 func Verify(ctx context.Context, rawMessage []byte, resolver dkim.TXTResolver) (string, string) {
 	if resolver == nil {

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rest-mail/go-dkim"
+	"github.com/rest-mail/go-dkim/pkg/dkim"
 )
 
 // maxARCSets is the RFC 8617 §5.1.1 ceiling on ARC chain length: a message must

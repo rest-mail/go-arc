@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rest-mail/go-dkim"
+	"github.com/rest-mail/go-dkim/pkg/dkim"
 )
 
 // FuzzVerify validates any message, seeded with valid chains of one and two

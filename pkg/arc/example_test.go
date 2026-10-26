@@ -9,7 +9,7 @@ import (
 	"fmt"
 
 	"github.com/rest-mail/go-arc/pkg/arc"
-	"github.com/rest-mail/go-dkim"
+	"github.com/rest-mail/go-dkim/pkg/dkim"
 )
 
 // Example verifies an ARC-sealed message. Real ARC sets are added upstream by
