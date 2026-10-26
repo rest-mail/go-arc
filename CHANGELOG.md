@@ -1,29 +1,38 @@
 # Changelog
 
-All notable changes to go-arc are documented here. This project adheres to
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+All notable changes to go-arc are documented here. The format is based on
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
+adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Before
+1.0, a minor release may carry breaking changes.
 
-## Unreleased
+## [Unreleased]
 
-go-arc now meets the standard of rest-mail/rest-mail-server#374: an RFC 8617
-checklist checked in CI, a 95% coverage gate, fuzzing, and the ValiMail ARC
-test suite. Writing the checklist found the bugs fixed below. The module is
-v0.x and its only user is REST Mail's server, so where compatibility would
-cost anything this is a clean break.
+## [0.4.0] - 2026-10-26
 
-**What the server feels:** it calls only `Verify`, which now fails some chains
-it used to pass (an AMS that signs an ARC-Seal or ARC-Message-Signature, an
-rsa-sha1 or sub-1024-bit AMS, an `a=RSA-SHA256` seal, a misplaced AAR `i=`, a
-malformed tag-list, a `d=` or `s=` that is not a DNS name) and passes AMSes
-signed with ed25519-sha256. It does not call `Seal`.
+### Changed (breaking)
 
-### Breaking
+- The library is split into packages. The module path is unchanged
+  (`github.com/rest-mail/go-arc`), but the root package is gone:
+  - `github.com/rest-mail/go-arc/pkg/arc` holds the whole public API under
+    the same names: `Verify`, `Seal`, `SealOptions`, `SealResult`,
+    `ErrChainFailed` and `ErrChainValidation`.
+  - `pkg/arc/internal/grammar` reads the ARC header field grammar: the
+    instance tag, the strict tag-list and folding whitespace. It is internal,
+    so it is not importable.
+  - `pkg/arc/rfctest` runs the ValiMail ARC test suite against the public
+    API. It holds tests only.
 
-- **Seal returns `ErrChainFailed`** for a message whose most recent ARC-Seal
-  already says `cv=fail`, and adds nothing (RFC 8617 §5.1 step 2). It used to
-  add another set.
-- **Seal refuses a `Domain` or `Selector` that is not a DNS name** in A-label
-  form, which Verify would have failed.
+No exported name changes, and `Verify` and `Seal` behave exactly as in v0.3.1.
+
+Migration: change the import path. The package is still named `arc`, so
+calls such as `arc.Verify` compile unchanged.
+
+| Before (v0.3) | After (v0.4) |
+|---------------|--------------|
+| `import "github.com/rest-mail/go-arc"` or `import arc "github.com/rest-mail/go-arc"` | `import "github.com/rest-mail/go-arc/pkg/arc"` |
+| `arc.Verify`, `arc.Seal`, `arc.SealOptions`, `arc.SealResult`, `arc.ErrChainFailed`, `arc.ErrChainValidation` | unchanged, now from `.../pkg/arc` |
+
+## [0.3.1] - 2026-10-23
 
 ### Changed
 
@@ -48,14 +57,6 @@ signed with ed25519-sha256. It does not call `Seal`.
 - **README verification badges:** show the enforced ≥95% coverage gate and
   the checklist's 36/46 mapped requirements. CI checks the labels against the
   audited workflow pin and the validated checklist, including its `n/a` rows.
-- **go-dkim v0.3.1.** The ARC-Message-Signature is verified by its
-  `VerifySignatureBare`, which now accepts ed25519-sha256 (RFC 8463) and
-  refuses rsa-sha1 and RSA keys under 1024 bits (RFC 8301). The ARC-Seal stays
-  rsa-sha256 only.
-- **By default the AMS signs every DKIM-Signature** on the message, as RFC
-  8617 §4.1.2 recommends.
-- **Seals are verified from the highest instance down** (§5.2 step 6); only
-  which seal a failure names changes.
 
 ### Fixed
 
@@ -69,6 +70,42 @@ signed with ed25519-sha256. It does not call `Seal`.
   undefined value) returns `ErrChainValidation`. Empty keeps computing it from
   the message, which is right when it is sealed as received. Checklist rows
   ARC-HDR-02, ARC-HDR-06 and ARC-SEAL-01 now map to tests (39/46).
+
+## [0.3.0] - 2026-10-17
+
+go-arc now meets the standard of rest-mail/rest-mail-server#374: an RFC 8617
+checklist checked in CI, a 95% coverage gate, fuzzing, and the ValiMail ARC
+test suite. Writing the checklist found the bugs fixed below. The module is
+v0.x and its only user is REST Mail's server, so where compatibility would
+cost anything this is a clean break.
+
+**What the server feels:** it calls only `Verify`, which now fails some chains
+it used to pass (an AMS that signs an ARC-Seal or ARC-Message-Signature, an
+rsa-sha1 or sub-1024-bit AMS, an `a=RSA-SHA256` seal, a misplaced AAR `i=`, a
+malformed tag-list, a `d=` or `s=` that is not a DNS name) and passes AMSes
+signed with ed25519-sha256. It does not call `Seal`.
+
+### Breaking
+
+- **Seal returns `ErrChainFailed`** for a message whose most recent ARC-Seal
+  already says `cv=fail`, and adds nothing (RFC 8617 §5.1 step 2). It used to
+  add another set.
+- **Seal refuses a `Domain` or `Selector` that is not a DNS name** in A-label
+  form, which Verify would have failed.
+
+### Changed
+
+- **go-dkim v0.3.1.** The ARC-Message-Signature is verified by its
+  `VerifySignatureBare`, which now accepts ed25519-sha256 (RFC 8463) and
+  refuses rsa-sha1 and RSA keys under 1024 bits (RFC 8301). The ARC-Seal stays
+  rsa-sha256 only.
+- **By default the AMS signs every DKIM-Signature** on the message, as RFC
+  8617 §4.1.2 recommends.
+- **Seals are verified from the highest instance down** (§5.2 step 6); only
+  which seal a failure names changes.
+
+### Fixed
+
 - **Only folding whitespace counts as whitespace in ARC tag-lists and `h=`**
   (RFC 6376 §3.2; RFC 5322 §3.2.2): space, tab and CRLF folding. A form feed,
   vertical tab, NEL or no-break space around a tag name, its `=`, a value or an
@@ -89,7 +126,7 @@ signed with ed25519-sha256. It does not call `Seal`.
 - **An ARC-Seal with `a=rsa-sha1`** fails with a reason that says rsa-sha1 is
   historic.
 
-## v0.2.3
+## [0.2.3] - 2026-07-25
 
 A single RFC 8617 §5.1.1 hardening fix on the verify path: the
 ARC-Message-Signature must sign the From header. The public API (`Seal`,
@@ -101,7 +138,7 @@ ARC-Message-Signature must sign the From header. The public API (`Seal`,
   (RFC 8617 §5.1.1); a chain whose AMS `h=` omits From is treated as cv=fail
   (#31).
 
-## v0.2.2
+## [0.2.2] - 2026-07-25
 
 Restores ARC-Message-Signature verification — which regressed once go-dkim began
 enforcing the RFC 6376 `v=` version rule, since a versionless ARC-Message-Signature
@@ -135,7 +172,7 @@ is unchanged.
   against header injection (#29).
 - Seal now rejects an incomplete prior ARC set instead of panicking (#23).
 
-## v0.2.1
+## [0.2.1] - 2026-07-25
 
 Verify-path correctness fixes bringing ARC chain validation into line with
 RFC 8617. The public API (`Seal`, `Verify`, `SealOptions`, `SealResult`) is
@@ -156,16 +193,16 @@ unchanged.
 - Bumped go-dkim to v0.1.2, which fixes a panic on malformed remote key records
   (#18).
 
-## v0.2.0
+## [0.2.0] - 2026-07-24
 
 See the [GitHub release](https://github.com/rest-mail/go-arc/releases/tag/v0.2.0)
 for details.
 
-## v0.1.1
+## [0.1.1] - 2026-07-23
 
 See the [GitHub release](https://github.com/rest-mail/go-arc/releases/tag/v0.1.1)
 for details.
 
-## v0.1.0
+## [0.1.0] - 2026-07-23
 
 Initial release: ARC sealing and verification (RFC 8617) built on go-dkim.
