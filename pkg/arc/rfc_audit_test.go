@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rest-mail/go-arc/pkg/arc/internal/grammar"
 	"github.com/rest-mail/go-dkim"
 )
 
@@ -283,7 +284,7 @@ func TestRFC_AARInstanceCFWS(t *testing.T) {
 		"i=1 (has; a semicolon); example.test",
 		"\r\n (folded\r\n comment)\r\n i=1; example.test",
 	} {
-		if n, err := fieldInstance("arc-authentication-results", value); err != nil || n != 1 {
+		if n, err := grammar.Instance("arc-authentication-results", value); err != nil || n != 1 {
 			t.Errorf("%q: got %d, %v; want instance 1", value, n, err)
 		}
 	}
@@ -299,7 +300,7 @@ func TestRFC_AARInstanceCFWS(t *testing.T) {
 		"i=0 (c); example.test",
 		"i=1 (c)",
 	} {
-		if n, err := fieldInstance("arc-authentication-results", value); err == nil {
+		if n, err := grammar.Instance("arc-authentication-results", value); err == nil {
 			t.Errorf("%q: got instance %d, want an error", value, n)
 		}
 	}
@@ -345,7 +346,7 @@ func TestRFC_AMSASInstanceCFWS(t *testing.T) {
 			"\r\n (folded\r\n comment)\r\n i=1; a=rsa-sha256",
 			"a=rsa-sha256; i=1",
 		} {
-			if n, err := fieldInstance(name, value); err != nil || n != 1 {
+			if n, err := grammar.Instance(name, value); err != nil || n != 1 {
 				t.Errorf("%s %q: got %d, %v; want instance 1", name, value, n, err)
 			}
 		}
@@ -360,7 +361,7 @@ func TestRFC_AMSASInstanceCFWS(t *testing.T) {
 			"i=1 (c) x; a=rsa-sha256",
 			"a=rsa-sha256; i=1 (c)",
 		} {
-			if n, err := fieldInstance(name, value); err == nil {
+			if n, err := grammar.Instance(name, value); err == nil {
 				t.Errorf("%s %q: got instance %d, want an error", name, value, n)
 			}
 		}
