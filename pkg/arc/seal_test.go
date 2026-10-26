@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rest-mail/go-arc/pkg/arc/internal/grammar"
 	"github.com/rest-mail/go-dkim"
 )
 
@@ -466,7 +467,7 @@ func TestSeal_InstanceFromMaxNotCount(t *testing.T) {
 			t.Fatalf("want new instance i=4 (highest present +1), got i=%d", res.Instance)
 		}
 		// The emitted ARC-Seal must actually carry i=4, so no second i=3 seal exists.
-		got, err := fieldInstance("arc-seal", strings.TrimPrefix(res.AS, "ARC-Seal:"))
+		got, err := grammar.Instance("arc-seal", strings.TrimPrefix(res.AS, "ARC-Seal:"))
 		if err != nil {
 			t.Fatalf("emitted ARC-Seal has an invalid i=: %v", err)
 		}

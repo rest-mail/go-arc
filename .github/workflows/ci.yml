@@ -18,10 +18,10 @@ jobs:
     uses: rest-mail/go-spf/.github/workflows/rfc-verification.yml@7d291c08d310b9c62afc287e75a534a39150fafb
     with:
       packages: '["./..."]'
-      checklist-dirs: '["."]'
+      checklist-dirs: '["./pkg/arc", "./pkg/arc/internal/grammar", "./pkg/arc/rfctest"]'
       fuzz-targets: >-
-        [{"package":".","target":"FuzzFieldInstance"},
-         {"package":".","target":"FuzzVerify"}]
+        [{"package":"./pkg/arc/internal/grammar","target":"FuzzFieldInstance"},
+         {"package":"./pkg/arc","target":"FuzzVerify"}]
 
   # Preserve the existing required context. A skipped or cancelled proof job
   # must never produce a successful Build & Test verdict.

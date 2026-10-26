@@ -1,81 +1,3 @@
-// Package arc verifies Authenticated Received Chain (ARC) headers per RFC 8617.
-//
-// ARC lets a message's authentication assessment survive intermediaries —
-// mailing lists, forwarders, and other relays that legitimately modify a message
-// and so break its original DKIM signature or SPF alignment. Each participating
-// hop records what it saw by prepending an ARC set of three header fields:
-//
-//   - ARC-Authentication-Results (AAR): the authentication results the hop observed;
-//   - ARC-Message-Signature (AMS): a DKIM-style signature over the message;
-//   - ARC-Seal (AS): a signature over the chain of ARC header fields so far.
-//
-// A downstream receiver can then cryptographically confirm the whole chain and
-// trust the earliest hop's assessment even though DKIM or SPF no longer pass
-// directly. This package does both sides: Verify checks an existing chain, and
-// Seal adds a new set as a forwarder — what Seal produces, Verify accepts.
-//
-// # Verifying
-//
-// Verify checks a raw RFC 5322 message and returns a chain-validation status
-// together with a human-readable reason:
-//
-//	cv, reason := arc.Verify(ctx, raw, nil) // nil resolver → system DNS
-//	fmt.Printf("arc=%s (%s)\n", cv, reason)
-//
-// It validates both the chain's structure — ARC sets numbered contiguously
-// 1..N, each set complete — and its cryptography (RFC 8617 §5.2): the most
-// recent ARC-Message-Signature must verify over the message, and every ARC-Seal
-// must verify over the ARC header chain up to its instance. Signing keys are
-// fetched from DNS at <selector>._domainkey.<domain>; pass a dkim.TXTResolver to
-// override the lookup (for tests or a custom resolver), or nil for system DNS.
-//
-// # Sealing
-//
-// Seal is the counterpart to Verify: a forwarder adds one ARC set — an
-// ARC-Authentication-Results, ARC-Message-Signature, and ARC-Seal for instance
-// i=N — and returns the message with the set prepended, ready to relay. It
-// records cv= by verifying the chain it is extending: "none" when there is no
-// prior chain, otherwise the "pass"/"fail" Verify reports for the message as
-// received.
-//
-//	res, err := arc.Seal(ctx, raw, arc.SealOptions{
-//		Domain:      "example.com",
-//		Selector:    "arc",
-//		PrivateKey:  key, // *rsa.PrivateKey, e.g. from dkim.ParsePrivateKey
-//		AuthResults: "example.com; spf=pass smtp.mailfrom=a@example.com",
-//	})
-//	// res.Message is raw with the new ARC set prepended; relay it.
-//
-// The ARC-Message-Signature is structurally a DKIM-Signature and the ARC-Seal a
-// DKIM-style signature over the ARC header chain, both rsa-sha256, so sealing
-// reuses the DKIM signing key and the same go-dkim canonicalization the verifier
-// uses — what Seal produces, Verify (and any conformant RFC 8617 verifier)
-// accepts over the exact transmitted bytes.
-//
-// # Status values
-//
-// The status is one of three RFC 8617 chain-validation values:
-//
-//   - "pass" — the chain is present and cryptographically intact;
-//   - "fail" — the chain is present but broken: a bad signature, a tampered
-//     field, or a structurally invalid chain;
-//   - "none" — the message carries no ARC sets.
-//
-// Record it in a downstream Authentication-Results header as arc=<status>.
-//
-// # Building on go-dkim
-//
-// An ARC-Message-Signature is structurally a DKIM-Signature, and an ARC-Seal is
-// a DKIM-style signature over the ARC header fields. This package therefore
-// reuses the canonicalization and signature primitives exported by
-// github.com/rest-mail/go-dkim — its only dependency — rather than
-// reimplementing them, so ARC verification is byte-for-byte consistent with DKIM
-// verification over the same message. ARC uses rsa-sha256: the ARC-Seal is
-// verified with relaxed header canonicalization, and the ARC-Message-Signature
-// is verified exactly as the DKIM-Signature it mirrors, honoring the
-// canonicalization declared in its own c= tag — except that, per RFC 8617
-// §4.1.2, the AMS is not versioned: any v= tag it carries is not part of it and
-// is ignored rather than checked against the DKIM version rule.
 package arc
 
 import (
@@ -86,9 +8,9 @@ import (
 	"fmt"
 	"net"
 	"sort"
-	"strconv"
 	"strings"
 
+	"github.com/rest-mail/go-arc/pkg/arc/internal/grammar"
 	"github.com/rest-mail/go-dkim"
 )
 
@@ -174,7 +96,7 @@ func Verify(ctx context.Context, rawMessage []byte, resolver dkim.TXTResolver) (
 			return "fail", fmt.Sprintf("ARC-Seal (i=%d) carries a forbidden h= tag (RFC 8617 §4.1.3)", i)
 		}
 
-		cv := strings.ToLower(trimFWS(asTags["cv"]))
+		cv := strings.ToLower(grammar.TrimFWS(asTags["cv"]))
 		want := "pass"
 		if i == 1 {
 			want = "none"
@@ -338,7 +260,7 @@ func arcSealBase(chain []*arcSet) string {
 // cover the author identity and the chain must not verify.
 func amsSignsFrom(hTag string) bool {
 	for _, name := range strings.Split(hTag, ":") {
-		if strings.EqualFold(trimFWS(name), "from") {
+		if strings.EqualFold(grammar.TrimFWS(name), "from") {
 			return true
 		}
 	}
@@ -352,7 +274,7 @@ func amsSignsFrom(hTag string) bool {
 // ValiMail ARC test suite, sign it.
 func amsSignsARC(hTag string) string {
 	for _, name := range strings.Split(hTag, ":") {
-		name = strings.ToLower(trimFWS(name))
+		name = strings.ToLower(grammar.TrimFWS(name))
 		if name == "arc-seal" || name == "arc-message-signature" {
 			return name
 		}
@@ -375,7 +297,7 @@ func collectARCSets(headers []dkim.Header) (map[int]*arcSet, error) {
 	for idx := range headers {
 		h := &headers[idx]
 		name := strings.ToLower(h.Name)
-		if !isARCField(name) {
+		if !grammar.IsARCField(name) {
 			continue
 		}
 		// This IS an ARC header field. From here any structural defect fails the
@@ -383,7 +305,7 @@ func collectARCSets(headers []dkim.Header) (map[int]*arcSet, error) {
 		// silently skipped: a field named ARC-* but carrying a malformed i= or
 		// tag-list means the message bears a BROKEN chain, not none (RFC 8617
 		// §5.2).
-		i, err := fieldInstance(name, h.Value)
+		i, err := grammar.Instance(name, h.Value)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", h.Name, err)
 		}
@@ -415,207 +337,6 @@ func collectARCSets(headers []dkim.Header) (map[int]*arcSet, error) {
 		}
 	}
 	return sets, nil
-}
-
-// isARCField reports whether a lowercased header field name is one of the
-// three ARC header fields (RFC 8617 §4.1).
-func isARCField(name string) bool {
-	return name == "arc-authentication-results" || name == "arc-message-signature" || name == "arc-seal"
-}
-
-// fieldInstance returns the instance of an ARC header field, given its
-// lowercased name and its value, or an error naming the defect.
-//
-// The ARC-Message-Signature and ARC-Seal are DKIM tag-lists (RFC 8617 §4.1.2,
-// §4.1.3, importing RFC 6376 §3.2), read strictly: a tag name outside the
-// ABNF, a repeated tag, or an empty tag-spec (";;") makes the field malformed,
-// rather than taking one reading of it that another verifier might not share.
-// Tag names are case-sensitive, so the instance is the i= tag; I= is an
-// unknown tag. Their ABNF puts the instance first, as instance [CFWS] ";"
-// tag-list (§4.1.2, §4.1.3), and a leading instance may carry CFWS comments
-// like the AAR's (§3.9): "(hop) i (x)= 1 (y);" is the instance 1, and the rest
-// of the field is read as the strict tag-list, with no second i=. The i= tag
-// may also appear anywhere else in the list, as it does in the fields many
-// sealers write; there it is an ordinary tag-spec, with no comments.
-//
-// The ARC-Authentication-Results is not a tag-list: RFC 8617 §4.1.1 defines it
-// as arc-info = instance [CFWS] ";" authres-payload, so the i= tag comes first,
-// with comments allowed around its parts, and a ";" follows it. The payload's syntax does not affect the chain
-// (§3.4), so it is not parsed; its methods legally repeat.
-func fieldInstance(name, value string) (int, error) {
-	if name == "arc-authentication-results" {
-		return aarInstance(value)
-	}
-	if digits, rest, err := leadingInstance(value); err == nil {
-		tags, err := strictTagList(rest)
-		if err != nil {
-			return 0, err
-		}
-		if _, ok := tags["i"]; ok {
-			return 0, fmt.Errorf("repeated i= instance tag")
-		}
-		return parseInstance(digits)
-	}
-	tags, err := strictTagList(value)
-	if err != nil {
-		return 0, err
-	}
-	raw, ok := tags["i"]
-	if !ok {
-		return 0, fmt.Errorf("missing required i= instance tag")
-	}
-	return parseInstance(raw)
-}
-
-// aarInstance reads the instance at the start of an ARC-Authentication-Results
-// value by RFC 8617 §4.1.1 and §3.9:
-//
-//	arc-info = instance [CFWS] ";" authres-payload
-//	instance = [CFWS] %s"i" [CFWS] "=" [CFWS] position
-//
-// CFWS is RFC 5322 §3.2.2 folding whitespace and comments, which may nest and
-// hold quoted-pairs, so "i=1 (first hop);" and "(x) i (y)= 1;" are the
-// instance 1.
-func aarInstance(value string) (int, error) {
-	digits, _, err := leadingInstance(value)
-	if err != nil {
-		return 0, err
-	}
-	return parseInstance(digits)
-}
-
-// leadingInstance reads the RFC 8617 §3.9 instance at the start of an ARC
-// header field value, up to and including the [CFWS] ";" after it. It returns
-// the instance digits, still to be checked by parseInstance, and the rest of
-// the value after the ";".
-func leadingInstance(value string) (digits, rest string, err error) {
-	missing := fmt.Errorf("missing required i= instance tag at the start of the field")
-	if rest, err = skipCFWS(value); err != nil {
-		return "", "", err
-	}
-	if !strings.HasPrefix(rest, "i") {
-		return "", "", missing
-	}
-	if rest, err = skipCFWS(rest[1:]); err != nil {
-		return "", "", err
-	}
-	if !strings.HasPrefix(rest, "=") {
-		return "", "", missing
-	}
-	if rest, err = skipCFWS(rest[1:]); err != nil {
-		return "", "", err
-	}
-	end := 0
-	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
-		end++
-	}
-	digits = rest[:end]
-	if rest, err = skipCFWS(rest[end:]); err != nil {
-		return "", "", err
-	}
-	if !strings.HasPrefix(rest, ";") {
-		if rest != "" {
-			return "", "", fmt.Errorf("malformed i= instance %q (want a 1..%d decimal with no sign or leading zero)", digits+rest, maxInstance)
-		}
-		return "", "", fmt.Errorf("no \";\" after the i= instance tag")
-	}
-	return digits, rest[1:], nil
-}
-
-// skipCFWS returns s without its leading CFWS (RFC 5322 §3.2.2): folding
-// whitespace and comments, which nest and may hold quoted-pairs. A comment
-// that is not closed is an error.
-func skipCFWS(s string) (string, error) {
-	for {
-		s = strings.TrimLeft(s, " \t\r\n")
-		if !strings.HasPrefix(s, "(") {
-			return s, nil
-		}
-		depth, i := 0, 0
-		for ; i < len(s); i++ {
-			switch s[i] {
-			case '\\':
-				i++ // quoted-pair: the next character is literal
-			case '(':
-				depth++
-			case ')':
-				depth--
-			}
-			if depth == 0 {
-				break
-			}
-		}
-		if depth != 0 {
-			return "", fmt.Errorf("unclosed comment before the i= instance")
-		}
-		s = s[i+1:]
-	}
-}
-
-// trimFWS removes the folding whitespace RFC 5322 §3.2.2 allows around a tag,
-// a value or an h= entry (SP, HTAB, CR and LF), and nothing else.
-// strings.TrimSpace would also strip form feeds and Unicode spaces, which the
-// ABNF doesn't allow there.
-func trimFWS(s string) string { return strings.Trim(s, " \t\r\n") }
-
-// strictTagList parses a DKIM tag-list as dkim.ParseTagListStrict does (tag
-// names and values by the RFC 6376 §3.2 ABNF, no repeated tag) and also
-// refuses an empty tag-spec, which the ABNF allows only as the one optional
-// ";" at the end.
-func strictTagList(value string) (map[string]string, error) {
-	tags, err := dkim.ParseTagListStrict(value)
-	if err != nil {
-		return nil, err
-	}
-	segs := strings.Split(value, ";")
-	for _, seg := range segs[:len(segs)-1] {
-		if trimFWS(seg) == "" {
-			return nil, fmt.Errorf("empty tag-spec in tag-list")
-		}
-	}
-	return tags, nil
-}
-
-// maxInstance is the RFC 8617 §4.2.1 ceiling on an individual ARC set's
-// instance number: i ranges over 1..50. It equals maxARCSets — a contiguous
-// chain's highest instance is its set count — but names the per-set range
-// constraint parseInstance enforces, distinct from the chain-length ceiling
-// Verify checks.
-const maxInstance = maxARCSets
-
-// parseInstance validates the value of an i= instance tag. A conformant
-// instance is a bare decimal in 1..50 (RFC 8617 §3.9 "position = 1*2DIGIT",
-// §4.2.1 range): no sign, no leading zero, no surrounding cruft, no overflow.
-// It returns the instance on success, or an error naming the defect.
-func parseInstance(raw string) (int, error) {
-	if !validInstanceDigits(raw) {
-		return 0, fmt.Errorf("malformed i= instance %q (want a 1..%d decimal with no sign or leading zero)", raw, maxInstance)
-	}
-	n, _ := strconv.Atoi(raw) // one or two digits: cannot fail
-	if n > maxInstance {
-		return 0, fmt.Errorf("i= instance %q out of range 1..%d", raw, maxInstance)
-	}
-	return n, nil
-}
-
-// validInstanceDigits reports whether s is the canonical decimal form of an ARC
-// instance: 1 or 2 ASCII digits with no leading zero (RFC 8617 §3.9
-// "position = 1*2DIGIT", canonical). It rejects "" , "007"/"01" (zero-padded or
-// >2 digits), "0", "-3", "+1", "1 ", "1a", and any overflow, so only 1..99 in
-// canonical form pass here; parseInstance additionally enforces the 1..50 range.
-func validInstanceDigits(s string) bool {
-	if len(s) < 1 || len(s) > 2 {
-		return false
-	}
-	if s[0] < '1' || s[0] > '9' { // first digit non-zero: no leading zero, no sign
-		return false
-	}
-	for i := 1; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
-			return false
-		}
-	}
-	return true
 }
 
 // validDNSName reports whether name is a DNS name in A-label form: dot-separated
@@ -681,7 +402,7 @@ func removeVTag(field string) string {
 		} else {
 			i = n
 		}
-		if eq := strings.IndexByte(seg, '='); eq >= 0 && trimFWS(seg[:eq]) == "v" {
+		if eq := strings.IndexByte(seg, '='); eq >= 0 && grammar.TrimFWS(seg[:eq]) == "v" {
 			continue // drop the whole v= tag together with its delimiter
 		}
 		b.WriteString(seg)

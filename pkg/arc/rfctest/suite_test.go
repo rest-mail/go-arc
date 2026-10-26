@@ -1,4 +1,4 @@
-package arc
+package rfctest
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rest-mail/go-arc/pkg/arc"
 	"gopkg.in/yaml.v3"
 )
 
@@ -139,7 +140,7 @@ func TestValiMailValidationSuite(t *testing.T) {
 					t.Logf("expecting cv=%s, not the suite's %q: %s", ex.want, tc.CV, ex.reason)
 					want = ex.want
 				}
-				got, reason := Verify(context.Background(), suiteMessage(tc.Message), resolver)
+				got, reason := arc.Verify(context.Background(), suiteMessage(tc.Message), resolver)
 				if got != want {
 					t.Errorf("%s: cv=%s (%s), want %s", tc.Description, got, reason, want)
 				}

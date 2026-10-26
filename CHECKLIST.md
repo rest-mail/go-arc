@@ -13,8 +13,9 @@ relies on them. A section number alone is RFC 8617's; the others are named.
 
 An item that does not apply to a library (because it is the receiver's policy,
 or the library speaks no SMTP, say) says "n/a" and why. CI checks this file
-against the tests with `go run ./internal/checklist`; the format is described
-in the [README](README.md#the-rfc-checklist).
+against the tests with
+`go run ./internal/checklist ./pkg/arc ./pkg/arc/internal/grammar ./pkg/arc/rfctest`;
+the format is described in the [README](README.md#the-rfc-checklist).
 
 ## Audit record (2026-10-22)
 
@@ -63,7 +64,7 @@ it is a conformance gap, not evidence that the RFC makes the rule optional.
 | ARC-HDR-19 | 4.1.2 | Normative | ARC imposes no selector/domain alignment requirement on an AMS: its signing identity can differ from the AS, AAR authserv-id and message author, and its own published key must verify it. | `TestRFC_IndependentSigningIdentities` |
 | ARC-HDR-20 | 4.1.3 | Normative | ARC imposes no selector/domain alignment requirement on an AS: its key identity can differ from the corresponding AMS and author, and its own published key must verify it. | `TestRFC_IndependentSigningIdentities` |
 | ARC-HDR-21 | 4.1.4 | Normative | The AAR permits UTF-8 where Authentication-Results does; EAI message headers and payload text are preserved and signed without requiring DKIM quoted-printable encoding. This does not cover U-label key identities (ARC-HDR-16). | `TestRFC_UTF8AssessmentAndMessage` |
-| ARC-HDR-22 | 4.1.2, 4.1.3 | Normative | The AMS and AS ABNF puts the instance before the rest of the tag-list. | n/a: not enforced for AMS/AS; `fieldInstance` deliberately accepts an instance anywhere in their tag-lists for sealer interoperability. This is a grammar tolerance, not strict ABNF conformance; AAR's first-instance rule is enforced (ARC-HDR-01). |
+| ARC-HDR-22 | 4.1.2, 4.1.3 | Normative | The AMS and AS ABNF puts the instance before the rest of the tag-list. | n/a: not enforced for AMS/AS; `grammar.Instance` deliberately accepts an instance anywhere in their tag-lists for sealer interoperability. This is a grammar tolerance, not strict ABNF conformance; AAR's first-instance rule is enforced (ARC-HDR-01). |
 | ARC-HDR-23 | 3.9, 4.1.1 | Normative | The AAR instance grammar allows CFWS, including nested RFC 5322 comments with quoted-pairs, around its name, equals sign and value and before the following `;`. | `TestRFC_AARInstanceCFWS` |
 | ARC-HDR-24 | 3.9, 4.1.3 | Normative | The AS instance grammar allows CFWS, including nested RFC 5322 comments with quoted-pairs, around its name, equals sign and value and before the following `;`; the rest of the field is still the strict tag-list. | `TestRFC_AMSASInstanceCFWS` |
 | ARC-HDR-25 | 3.9, 4.1.2 | Normative | The AMS instance grammar allows CFWS, including RFC 5322 comments, around its name, equals sign and value. | n/a: partly supported. go-arc reads every comment position in a leading AMS instance, but go-dkim checks the AMS signature with the RFC 6376 §3.2 tag-list, which has no comments. A comment after the equals sign or the value is part of an ordinary tag-value and verifies; one before `i` or before `=` makes go-dkim refuse the AMS, so the chain fails. Full support needs go-dkim to verify a signature whose tags were parsed by the caller. |

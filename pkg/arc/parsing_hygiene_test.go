@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rest-mail/go-arc/pkg/arc/internal/grammar"
 	"github.com/rest-mail/go-dkim"
 )
 
@@ -367,13 +368,13 @@ func amsHTag(t *testing.T, amsField string) string {
 func TestStrictTagList_OnlyFWSIsWhitespace(t *testing.T) {
 	for _, name := range []string{"arc-authentication-results", "arc-message-signature", "arc-seal"} {
 		for _, ok := range []string{"i=1; a=b", " i = 1 ; a=b", "i\t=\t1; a=b", "i\r\n =1; a=b"} {
-			if n, err := fieldInstance(name, ok); err != nil || n != 1 {
+			if n, err := grammar.Instance(name, ok); err != nil || n != 1 {
 				t.Errorf("%s %q: got %d, %v; want instance 1", name, ok, n, err)
 			}
 		}
 		for _, ws := range []string{"\f", "\v", "\u0085", " "} {
 			for _, bad := range []string{"i" + ws + "=1; a=b", ws + "i=1; a=b", "i=" + ws + "1; a=b"} {
-				if n, err := fieldInstance(name, bad); err == nil {
+				if n, err := grammar.Instance(name, bad); err == nil {
 					t.Errorf("%s %q: got instance %d, want an error", name, bad, n)
 				}
 			}

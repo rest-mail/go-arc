@@ -8,12 +8,12 @@ import (
 	"encoding/base64"
 	"fmt"
 
-	arc "github.com/rest-mail/go-arc"
+	"github.com/rest-mail/go-arc/pkg/arc"
 	"github.com/rest-mail/go-dkim"
 )
 
 // Example verifies an ARC-sealed message. Real ARC sets are added upstream by
-// forwarders and mailing lists; go-arc only verifies them. To keep the round
+// forwarders and mailing lists, with Seal (see ExampleSeal). To keep the round
 // trip self-contained, sealARC below builds one valid ARC set from go-dkim's
 // primitives, and an in-memory resolver serves the matching public key — in
 // production you would pass nil for the resolver and let Verify use system DNS.
