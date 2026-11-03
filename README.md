@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/rest-mail/go-arc/actions/workflows/ci.yml/badge.svg)](https://github.com/rest-mail/go-arc/actions/workflows/ci.yml)
 [![Coverage gate: ≥95%](https://img.shields.io/badge/coverage%20gate-%E2%89%A595%25-brightgreen)](COVERAGE.md)
-[![Checklist: 48/60 mapped](https://img.shields.io/badge/checklist-48%2F60%20mapped-blue)](CHECKLIST.md)
+[![Checklist: 51/61 mapped](https://img.shields.io/badge/checklist-51%2F61%20mapped-blue)](CHECKLIST.md)
 [![Go Reference](https://pkg.go.dev/badge/github.com/rest-mail/go-arc.svg)](https://pkg.go.dev/github.com/rest-mail/go-arc/pkg/arc)
 [![Go Report Card](https://goreportcard.com/badge/github.com/rest-mail/go-arc)](https://goreportcard.com/report/github.com/rest-mail/go-arc)
 
@@ -164,6 +164,8 @@ run on every test.
 | A failed chain is not continued; a broken chain is sealed with `cv=fail`, its seal covering the new set only | RFC 8617 §5.1, §5.1.2 | `Seal`, `ErrChainFailed` |
 | Algorithms: the AMS verifies with rsa-sha256 or ed25519-sha256, the ARC-Seal with rsa-sha256; rsa-sha1 fails; Seal signs with rsa-sha256 | RFC 8301, RFC 8463 | `Verify`, `Seal` |
 | Canonicalization: the AMS honours its `c=`, relaxed or simple; the ARC-Seal is relaxed | RFC 8617 §4.1.2, §4.1.3 | `Verify`, `SealOptions.HeaderCanon`, `SealOptions.BodyCanon` |
+| The chain's sealers: each set's ARC-Seal and AMS `d=`/`s=`, recorded `cv=`, and its ARC-Authentication-Results, raw and read as RFC 8601 results | RFC 8617 §7.2.1, §7.2.2 | `VerifyChain`, `ChainResult.Sets` |
+| oldest-pass: the oldest ARC-Message-Signature that still verifies, for `header.oldest-pass`, on request | RFC 8617 §5.2 step 5, §6 | `VerifyOptions.OldestPass`, `ChainResult.OldestPass` |
 | Key lookup through any `dkim.TXTResolver`, or the system DNS with `nil` | RFC 6376 §3.6.2 | `Verify`, `SealOptions.Resolver` |
 
 `Verify` returns the chain validation status, `"pass"`, `"fail"` or `"none"`,
@@ -171,8 +173,33 @@ and a human-readable reason:
 
 ```go
 func Verify(ctx context.Context, rawMessage []byte, resolver dkim.TXTResolver) (string, string)
+func VerifyChain(ctx context.Context, rawMessage []byte, opts VerifyOptions) ChainResult
 func Seal(ctx context.Context, rawMessage []byte, opt SealOptions) (*SealResult, error)
 ```
+
+`VerifyChain` runs the same validation and returns a `ChainResult`: the same
+`Status` and `Reason`, one `ChainSet` per ARC set in instance order (the
+ARC-Seal's `SealDomain` and `SealSelector`, its recorded `ChainValidation`,
+the AMS `SignatureDomain` and `SignatureSelector`, and the
+ARC-Authentication-Results payload as `AuthResults` and as a parsed
+`Assessment`), and, with `VerifyOptions.OldestPass` on a passing chain,
+`OldestPass` with `OldestPassChecked` set:
+
+```go
+res := arc.VerifyChain(ctx, raw, arc.VerifyOptions{OldestPass: true})
+ar := "arc=" + res.Status
+if res.OldestPassChecked {
+	ar += fmt.Sprintf(" header.oldest-pass=%d", res.OldestPass)
+}
+for _, set := range res.Sets {
+	fmt.Println(set.Instance, set.SealDomain, set.AuthResults)
+}
+```
+
+`Sets` is filled for any chain that passed the structural checks, so a chain
+whose signature failed still names its sealers for a DMARC report. Each entry
+is what that hop claimed: a passing chain proves who added it, not that it is
+true.
 
 `SealResult` holds the new `Instance`, the `ChainValidation` recorded in the
 seal, the three fields `AAR`, `AMS` and `AS`, and the `Message` with the set
@@ -212,10 +239,14 @@ The host:
 
 - Passes the message exactly as received; any change made before `Verify`
   breaks the signatures.
-- Records the status in its own Authentication-Results field as `arc=<status>`.
+- Records the status in its own Authentication-Results field as
+  `arc=<status>`, with `header.oldest-pass` from `VerifyChain` and the
+  `smtp.remote-ip` it knows (RFC 8617 §6).
 - Decides what a status means for delivery. RFC 8617 §5.2 says to treat a
   failing chain like no chain at all, and a passing chain is not a trust
   verdict: whether to honour a sealer's assessment is local policy.
+  `VerifyChain` names each sealer and what it recorded, for that decision and
+  for a DMARC report (RFC 8617 §7.2.1, §7.2.2).
 
 ### Sealing
 
@@ -300,9 +331,8 @@ go run ./internal/checklist ./pkg/arc ./pkg/arc/internal/grammar ./pkg/arc/rfcte
 
 ### What it does not do
 
-Some gaps are deliberate, and go-arc will not fill them. Others are planned,
-each with an issue. The checklist records every one as an `n/a` row with its
-reason.
+Some gaps are deliberate, and go-arc will not fill them; others are not
+planned. The checklist records every one as an `n/a` row with its reason.
 
 #### Not supported, by design
 
@@ -311,7 +341,7 @@ reason.
 | Internationalized domain names | `d=` and `s=` must be A-labels: a U-label fails the chain, and Seal refuses one (ARC-HDR-16). | Converting needs IDNA tables, which go-arc does not carry; go-dkim refuses U-labels in a DKIM-Signature too, and no sealer seen in practice writes them. |
 | Several algorithms at one instance | A second field of one kind at an instance fails the chain (ARC-SET-03). | That is the ARC-MULTI draft, which expired; RFC 8617 has one set per instance. |
 | Instance position in the AMS and ARC-Seal | `i=` may come anywhere in their tag-lists, not only first, as their ABNF puts it (ARC-HDR-22). | Many sealers write it elsewhere, and refusing them would fail real chains. The ARC-Authentication-Results' `i=` must come first. |
-| Receiver policy | `Verify` returns a status and a reason. It writes no Authentication-Results field, sends no SMTP reply, and makes no delivery decision or DMARC report (ARC-VAL-11, ARC-VAL-12, ARC-VAL-14, ARC-RES-02, ARC-POLICY-01, ARC-POLICY-02). | Those need the SMTP session and the receiver's own policy, which the library does not have. |
+| Receiver policy | `Verify` returns a status and a reason, and `VerifyChain` also the sealers, their assessments and oldest-pass. Neither writes no Authentication-Results field, sends no SMTP reply, and makes no delivery decision or DMARC report (ARC-VAL-11, ARC-VAL-12, ARC-VAL-14, ARC-RES-02, ARC-POLICY-01, ARC-POLICY-02). | Those need the SMTP session and the receiver's own policy, which the library does not have. |
 
 #### Not planned
 
@@ -319,13 +349,6 @@ reason.
 |------|------------------|
 | ed25519-sha256 ARC-Seals | Seal signs with rsa-sha256 only, and an ed25519-sha256 ARC-Seal fails the chain. An ed25519-sha256 AMS verifies. |
 | Comments before `i` or `=` in an AMS | go-arc reads them, but go-dkim, which checks the AMS signature, refuses them, so the chain fails (ARC-HDR-25). A comment after the `=` verifies. Supporting the rest needs a go-dkim API that verifies tags the caller parsed. |
-
-#### Planned
-
-| Gap | Issue |
-|-----|-------|
-| `Verify` returns only a status and a reason. A host that trusts some sealers, or reports an ARC-influenced decision in DMARC, needs the chain's sealers and what each hop recorded. | [#43](https://github.com/rest-mail/go-arc/issues/43) |
-| The oldest ARC-Message-Signature that still verifies (oldest-pass, §5.2 step 5) is not computed, so the host cannot record `header.oldest-pass` (ARC-VAL-08, ARC-RES-01). | [#44](https://github.com/rest-mail/go-arc/issues/44) |
 
 ### Badges and coverage
 

@@ -75,6 +75,14 @@ func aarInstance(value string) (int, error) {
 	return parseInstance(digits)
 }
 
+// AARPayload returns the authres-payload of an ARC-Authentication-Results
+// value: everything after the leading instance and the ";" that follows it
+// (RFC 8617 §4.1.1), with comments around the instance read as in Instance.
+func AARPayload(value string) (string, error) {
+	_, rest, err := leadingInstance(value)
+	return rest, err
+}
+
 // leadingInstance reads the RFC 8617 §3.9 instance at the start of an ARC
 // header field value, up to and including the [CFWS] ";" after it. It returns
 // the instance digits, still to be checked by parseInstance, and the rest of

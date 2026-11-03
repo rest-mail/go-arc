@@ -32,7 +32,19 @@ type arcSet struct {
 // Header/body canonicalization is shared with dkim.Verify (via the primitives
 // exported by github.com/rest-mail/go-dkim/pkg/dkim), so ARC verification is consistent with
 // DKIM verification and with any RFC 8617 verifier operating on the same bytes.
+//
+// VerifyChain runs the same validation and also returns the chain's sealers,
+// their recorded assessments and, on request, the oldest-pass value.
 func Verify(ctx context.Context, rawMessage []byte, resolver dkim.TXTResolver) (string, string) {
+	r := VerifyChain(ctx, rawMessage, VerifyOptions{Resolver: resolver})
+	return r.Status, r.Reason
+}
+
+// verifyChain is VerifyChain without the result's Status/Reason split: it
+// returns the status and reason as Verify does and fills res.Sets and the
+// oldest-pass fields as it goes.
+func verifyChain(ctx context.Context, rawMessage []byte, opts VerifyOptions, res *ChainResult) (string, string) {
+	resolver := opts.Resolver
 	if resolver == nil {
 		resolver = net.DefaultResolver.LookupTXT
 	}
@@ -72,6 +84,7 @@ func Verify(ctx context.Context, rawMessage []byte, resolver dkim.TXTResolver) (
 			return "fail", fmt.Sprintf("i=%d incomplete ARC set", i)
 		}
 	}
+	res.Sets = chainSets(sets, n)
 
 	// Each ARC-Seal's cv= (chain-validation) tag must be internally consistent
 	// (RFC 8617 §5.2 steps 2 & 3C): "none" at i=1 and "pass" at every i>1. A
@@ -119,12 +132,8 @@ func Verify(ctx context.Context, rawMessage []byte, resolver dkim.TXTResolver) (
 	// that signs an ARC-Seal or ARC-Message-Signature is refused, as dkimpy and
 	// the ValiMail ARC test suite do. One that signs ARC-Authentication-Results,
 	// as draft-era sealers did, is tolerated (see the README).
-	amsH := dkim.ParseTagList(sets[n].ams.Value)["h"]
-	if !amsSignsFrom(amsH) {
-		return "fail", fmt.Sprintf("ARC-Message-Signature (i=%d) h= does not sign the From header (RFC 6376 §5.4)", n)
-	}
-	if f := amsSignsARC(amsH); f != "" {
-		return "fail", fmt.Sprintf("ARC-Message-Signature (i=%d) h= signs %s (RFC 8617 §4.1.2)", n, f)
+	if reason := amsHeaderRule(sets[n].ams, n); reason != "" {
+		return "fail", reason
 	}
 
 	// 1. The most recent ARC-Message-Signature must verify over the message.
@@ -158,7 +167,45 @@ func Verify(ctx context.Context, rawMessage []byte, resolver dkim.TXTResolver) (
 		}
 	}
 
+	// 3. RFC 8617 §5.2 step 5 (OPTIONAL): oldest-pass. It does not affect the
+	// status, so it runs only once the chain has passed, and only on request:
+	// each older AMS costs a key lookup and a signature check.
+	if opts.OldestPass {
+		res.OldestPass = oldestPass(ctx, sets, n, headers, body, resolver)
+		res.OldestPassChecked = true
+	}
+
 	return "pass", fmt.Sprintf("ARC chain cryptographically verified (%d set(s))", n)
+}
+
+// amsHeaderRule returns why the h= list of the ARC-Message-Signature at
+// instance i breaks the chain, or "" if it does not.
+func amsHeaderRule(ams *dkim.Header, i int) string {
+	amsH := dkim.ParseTagList(ams.Value)["h"]
+	if !amsSignsFrom(amsH) {
+		return fmt.Sprintf("ARC-Message-Signature (i=%d) h= does not sign the From header (RFC 6376 §5.4)", i)
+	}
+	if f := amsSignsARC(amsH); f != "" {
+		return fmt.Sprintf("ARC-Message-Signature (i=%d) h= signs %s (RFC 8617 §4.1.2)", i, f)
+	}
+	return ""
+}
+
+// oldestPass computes RFC 8617 §5.2 step 5 over a chain whose AMS at instance
+// n already verified: it checks each older AMS from n-1 down to 1, and at the
+// first one (instance M) that fails, by the same rules as the most recent
+// AMS, it returns M+1. If every AMS verifies it returns 0.
+func oldestPass(ctx context.Context, sets map[int]*arcSet, n int, headers []dkim.Header, body string, resolver dkim.TXTResolver) int {
+	for m := n - 1; m >= 1; m-- {
+		ams := sets[m].ams
+		if amsHeaderRule(ams, m) != "" {
+			return m + 1
+		}
+		if r := dkim.VerifySignatureBare(ctx, *ams, headers, body, resolver); r.Result != dkim.ResultPass {
+			return m + 1
+		}
+	}
+	return 0
 }
 
 // verifyARCSeal verifies the ARC-Seal of the LAST set in chain (ascending
