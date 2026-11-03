@@ -23,6 +23,17 @@
 //	cv, reason := arc.Verify(ctx, raw, nil) // nil resolver → system DNS
 //	fmt.Printf("arc=%s (%s)\n", cv, reason)
 //
+// VerifyChain runs the same validation and returns a ChainResult: the status
+// and reason, each ARC set's sealer (the ARC-Seal's d= and s=), its recorded
+// cv= and its ARC-Authentication-Results, and, when VerifyOptions.OldestPass
+// is set, the oldest-pass value of a passing chain (RFC 8617 §5.2 step 5) for
+// header.oldest-pass:
+//
+//	res := arc.VerifyChain(ctx, raw, arc.VerifyOptions{OldestPass: true})
+//	for _, set := range res.Sets {
+//		fmt.Println(set.Instance, set.SealDomain, set.AuthResults)
+//	}
+//
 // It validates both the chain's structure — ARC sets numbered contiguously
 // 1..N, each set complete — and its cryptography (RFC 8617 §5.2): the most
 // recent ARC-Message-Signature must verify over the message, and every ARC-Seal

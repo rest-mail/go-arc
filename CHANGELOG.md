@@ -7,6 +7,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Before
 
 ## [Unreleased]
 
+### Added
+
+- `VerifyChain` validates a chain exactly as `Verify` does and returns a
+  `ChainResult` with the status, the reason and one `ChainSet` per ARC set,
+  in instance order: the ARC-Seal's `d=`, `s=` and recorded `cv=`, the
+  ARC-Message-Signature's `d=` and `s=`, and the ARC-Authentication-Results
+  payload, raw and read as RFC 8601 method results. The sets are filled for
+  any chain that passed the structural checks. A host can use them to trust
+  some sealers or to report an ARC-influenced decision (RFC 8617 §7.2.1,
+  §7.2.2) (#43).
+- `VerifyOptions.OldestPass` computes oldest-pass on a passing chain (RFC 8617
+  §5.2 step 5): the lowest instance whose ARC-Message-Signature still
+  verifies, counting down from the most recent, or 0 when all do, for
+  `header.oldest-pass` in Authentication-Results (§6). It is off by default,
+  since each older signature costs a key lookup (#44).
+
+`Verify` is unchanged.
+
 ## [0.4.0] - 2026-10-26
 
 ### Changed (breaking)
